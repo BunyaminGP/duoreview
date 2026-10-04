@@ -1,0 +1,7 @@
+node_modules
+dist
+.duoreview
+.agentbridge
+izle.ps1
+*.log
+.DS_Store

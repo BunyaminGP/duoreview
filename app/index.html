@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>DuoReview</title>
+  <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <strong class="brand">DuoReview</strong>
+    <label><span data-i18n="project"></span>
+      <select id="project"></select>
+    </label>
+    <button id="pick" data-i18n-title="pickTitle">📁</button>
+    <label><span data-i18n="captain"></span>
+      <select id="captain"><option value="claude">Claude</option><option value="codex">Codex</option></select>
+    </label>
+    <label><span data-i18n="review"></span>
+      <select id="mode">
+        <option value="after_all" data-i18n="modeAfterAll"></option>
+        <option value="immediate" data-i18n="modeImmediate"></option>
+      </select>
+    </label>
+    <span class="spacer"></span>
+    <label><span data-i18n="language"></span>
+      <select id="lang"></select>
+    </label>
+    <button id="reset" data-i18n-title="resetTitle" data-i18n="reset"></button>
+    <button id="team" class="primary" data-i18n="teamStart"></button>
+  </header>
+  <div class="models">
+    <label><span data-i18n="profile"></span>
+      <select id="profile">
+        <option value="ekonomik" data-i18n="profEco"></option>
+        <option value="dengeli" data-i18n="profBal"></option>
+        <option value="guclu" data-i18n="profPower"></option>
+        <option value="ozel" data-i18n="profCustom"></option>
+      </select>
+    </label>
+    <span class="grp"><b>Claude</b>
+      <input id="model-claude" list="models-claude" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off">
+      <select id="effort-claude" data-i18n-title="effortTitle">
+        <option value="" data-i18n="effortDefault"></option><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option>
+      </select>
+    </span>
+    <span class="grp"><b>Codex</b>
+      <input id="model-codex" list="models-codex" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off">
+      <select id="effort-codex" data-i18n-title="effortTitle">
+        <option value="" data-i18n="effortDefault"></option><option>low</option><option>medium</option><option>high</option><option>xhigh</option>
+      </select>
+    </span>
+    <span class="note" data-i18n="modelsNote"></span>
+    <datalist id="models-claude"></datalist>
+    <datalist id="models-codex"></datalist>
+  </div>
+  <div class="brief">
+    <label for="brief" data-i18n="briefLabel"></label>
+    <textarea id="brief" rows="2" spellcheck="false"></textarea>
+  </div>
+  <main>
+    <section class="pane">
+      <div class="bar"><span class="dot" id="dot-claude"></span>Claude Code
+        <span class="badge" id="role-claude"></span><span class="state" id="state-claude"></span><span class="usage" id="usage-claude"></span>
+        <button data-start="claude" data-i18n="start"></button><button data-kill="claude" data-i18n="stop"></button></div>
+      <div class="term" id="term-claude"></div>
+    </section>
+    <section class="pane">
+      <div class="bar"><span class="dot" id="dot-codex"></span>Codex CLI
+        <span class="badge" id="role-codex"></span><span class="state" id="state-codex"></span><span class="usage" id="usage-codex"></span>
+        <button data-start="codex" data-i18n="start"></button><button data-kill="codex" data-i18n="stop"></button></div>
+      <div class="term" id="term-codex"></div>
+    </section>
+    <aside class="side">
+      <h2><span data-i18n="boardTitle"></span> <small id="summary"></small></h2>
+      <ul id="tasks" class="tasks"></ul>
+      <section id="decision" class="decision" hidden>
+        <h3 data-i18n="decisionTitle"></h3>
+        <p id="decision-title"></p>
+        <p class="hint" data-i18n="decisionHint"></p>
+        <textarea id="decision-note" rows="3" data-i18n-placeholder="decisionPh"></textarea>
+        <div class="row">
+          <button id="d-accept" data-i18n="dAccept" data-i18n-title="dAcceptTitle"></button>
+          <button id="d-rereview" data-i18n="dRereview" data-i18n-title="dRereviewTitle"></button>
+          <button id="d-rework" class="primary" data-i18n="dRework" data-i18n-title="dReworkTitle"></button>
+        </div>
+      </section>
+      <h2 data-i18n="eventsTitle"></h2>
+      <ul id="events" class="events"></ul>
+    </aside>
+  </main>
+  <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="i18n.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
