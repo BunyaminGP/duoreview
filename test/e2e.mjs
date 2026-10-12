@@ -50,41 +50,40 @@ await claude.call("post_tasks", { tasks: [
 ] });
 
 // --- Çalışma aşaması ---
-assert.equal(await act(codex), "CLAIM");
+// next_action sıradaki görevi kendisi üstlenir: tarif aynı cevapta gelir, ayrı claim_task gerekmez
+const c3 = (await codex.call("next_action")).data;
+assert.deepEqual([c3.action, c3.id, c3.touches], ["FINISH_WORK", 3, ["screens/Kaza.js"]]);
 assert.ok(!(await claude.call("claim_task", { id: 2 })).err);           // claude App.js'te çalışıyor
 const clash = await codex.call("claim_task", { id: 4 });
 assert.ok(clash.err && /aynı dosyalara/.test(clash.data), "dosya çakışması engellenmeli");
 assert.ok((await codex.call("claim_task", { id: 1 })).err, "başkasına atanan alınamaz");
 
-for (const id of [3, 5]) {
-  assert.ok(!(await codex.call("claim_task", { id })).err);
-  await codex.call("submit_task", { id, summary: "tamam", files: ["f.js"] });
-}
+// submit cevabı sıradaki adımı taşır: #3 bitince #5 üstlenilmiş gelir
+const s3 = (await codex.call("submit_task", { id: 3, summary: "tamam", files: ["f.js"] })).data;
+assert.deepEqual([s3.next.action, s3.next.id], ["FINISH_WORK", 5]);
 // codex'in elinde yalnız çakışan #4 kaldı → bekler (claude bitirmeli)
-let w = (await codex.call("next_action")).data;
+let w = (await codex.call("submit_task", { id: 5, summary: "tamam", files: ["f.js"] })).data.next;
 assert.equal(w.action, "WAIT");
 assert.match(w.why, /aynı dosyalara/);
 
 // Claude kendi işlerini bitirir
-await claude.call("submit_task", { id: 2, summary: "ses", files: ["App.js"] });
-assert.ok(!(await claude.call("claim_task", { id: 1 })).err);
-await claude.call("submit_task", { id: 1, summary: "hutbe", files: ["scripts/x"] });
-assert.ok(!(await claude.call("claim_task", { id: 6 })).err);
+assert.equal((await claude.call("submit_task", { id: 2, summary: "ses", files: ["App.js"] })).data.next.id, 1);
+assert.equal((await claude.call("submit_task", { id: 1, summary: "hutbe", files: ["scripts/x"] })).data.next.id, 6);
 // İnceleme aşaması henüz kapalı (#4 TODO, #6 WORKING)
 assert.ok((await codex.call("review_task", { id: 1, verdict: "approve", comment: "ok" })).err, "inceleme erken açılmamalı");
 await claude.call("submit_task", { id: 6, summary: "link", files: ["linking/a"] });
 
 // Çakışma kalktı → codex #4'ü alır ve bitirir; claude bu sırada bekler
-assert.equal(await act(codex), "CLAIM");
 assert.equal(await act(claude), "WAIT");
-assert.ok(!(await codex.call("claim_task", { id: 4 })).err);
+assert.equal((await codex.call("next_action")).data.id, 4);
 await codex.call("submit_task", { id: 4, summary: "kart", files: ["App.js"] });
 
 // --- Çapraz inceleme aşaması ---
 assert.equal(await act(claude), "REVIEW");
 assert.equal(await act(codex), "REVIEW");
 assert.ok((await claude.call("review_task", { id: 2, verdict: "approve", comment: "x" })).err, "kendi işini inceleyemez");
-await claude.call("review_task", { id: 3, verdict: "request_changes", severity: "major", comment: "test eksik" });
+const r3 = (await claude.call("review_task", { id: 3, verdict: "request_changes", severity: "major", comment: "test eksik" })).data;
+assert.deepEqual([r3.result, r3.next.action], ["REWORK 1/3", "REVIEW"]);
 const rw = (await codex.call("next_action")).data;
 assert.equal(rw.action, "REWORK");
 assert.equal(rw.fix, "test eksik");
@@ -96,8 +95,8 @@ assert.equal(await act(codex), "ALL_DONE");
 
 // --- İnceleme politikası: minor bulgu görevi durduramaz ---
 await claude.call("post_tasks", { tasks: [7, 8, 9, 10].map((n) => ({ title: "ek" + n, assignee: "codex", touches: ["ek" + n + "/"] })) });
-const finish = async (id) => { assert.ok(!(await codex.call("claim_task", { id })).err); await codex.call("submit_task", { id, summary: "v", files: [] }); };
-for (const id of [7, 8, 9, 10]) await finish(id); // inceleme aşaması ancak hepsi gönderilince açılır
+assert.ok(!(await codex.call("claim_task", { id: 7 })).err);
+for (const id of [7, 8, 9, 10]) await codex.call("submit_task", { id, summary: "v", files: [] }); // her submit sıradakini üstlenir; inceleme hepsi gönderilince açılır
 const noSev = await claude.call("review_task", { id: 7, verdict: "request_changes", comment: "nadir durum" });
 assert.ok(noSev.err && /approve_with_notes/.test(noSev.data), "severity olmadan reddedilmeli");
 assert.ok((await claude.call("review_task", { id: 7, verdict: "request_changes", severity: "minor", comment: "disk dolu" })).err, "minor görevi durduramaz");
@@ -140,6 +139,32 @@ const first = (await codex.call("next_action")).data, second = (await codex.call
 assert.equal(second.spec, undefined, "tarif ikinci kez gönderilmemeli");
 assert.ok(JSON.stringify(second).length < 400, "next_action cevabı küçük kalmalı");
 adminDb.prepare("UPDATE tasks SET status='DONE' WHERE id=9").run();
+
+// --- bağımlılık girişi, status(id), sayaç ---
+assert.ok(/99/.test((await claude.call("post_tasks", { tasks: [{ title: "y", depends_on: [99] }] })).data), "olmayan öncül reddedilmeli");
+const added = (await claude.call("post_tasks", { tasks: [{ title: "ön", assignee: "codex", description: "tarif" }] })).data;
+const dep = (await claude.call("post_tasks", { tasks: [{ title: "bağlı", assignee: "claude", depends_on: added.ids }] })).data;
+assert.equal(dep.next.action, "WAIT", "öncül bitmeden bağlı görev başlamaz");
+assert.ok((await claude.call("drop_task", { id: added.ids[0] })).err, "öncül silinemez");
+const st = (await codex.call("status", { id: added.ids[0] })).data;
+assert.deepEqual([st.spec, st.status, st.depends_on], ["tarif", "TODO", []]);
+assert.deepEqual((await claude.call("status", { id: dep.ids[0] })).data.depends_on, added.ids);
+assert.ok(!(await claude.call("drop_task", { id: dep.ids[0] })).err);
+assert.ok(!(await claude.call("drop_task", { id: added.ids[0] })).err);
+const calls = one(adminDb, "SELECT value FROM meta WHERE key='calls:codex'").value;
+await codex.call("status");
+assert.equal(Number(one(adminDb, "SELECT value FROM meta WHERE key='calls:codex'").value), Number(calls) + 1);
+assert.ok(Number(one(adminDb, "SELECT value FROM meta WHERE key='chars_out:codex'").value) > 0);
+
+// --- düz bir görev (tartışma ve yeniden çalışma yok) dört araç çağrısıdır: üstlen, gönder, incelemeye uyan, incele ---
+const callsOf = () => ["claude", "codex"].reduce((n, a) => n + Number(one(adminDb, "SELECT value FROM meta WHERE key=?", "calls:" + a).value), 0);
+const solo = (await claude.call("post_tasks", { tasks: [{ title: "tek", assignee: "codex" }] })).data.ids[0];
+const before = callsOf();
+assert.equal((await codex.call("next_action")).data.id, solo);
+assert.equal((await codex.call("submit_task", { id: solo, summary: "v" })).data.next.action, "WAIT");
+assert.equal((await claude.call("next_action")).data.action, "REVIEW");
+assert.equal((await claude.call("review_task", { id: solo, verdict: "approve", comment: "ok" })).data.next.action, "ALL_DONE");
+assert.equal(callsOf() - before, 4);
 
 // --- send_prompt / not ---
 await claude.call("send_prompt", { text: "App.js'teki hook'u kontrol eder misin?" });

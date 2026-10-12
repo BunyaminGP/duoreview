@@ -52,12 +52,40 @@ function rig({ alive = true, approval = false } = {}) {
   assert.equal(r.enters(), 1 + RETRIES);
 }
 
-// Ekranda onay sorusu varken yineleme yapılmaz: Enter soruyu kullanıcı adına cevaplardı
+// Ekranda onay sorusu varken metin ve ilk Enter bile gönderilmez.
 {
   const r = rig({ approval: true });
-  r.inject("claude", "kısa");
+  const delivered = r.inject("claude", "kısa");
+  r.run(60_000);
+  assert.equal(r.enters(), 0);
+  assert.equal(await delivered, false);
+  assert.deepEqual(r.sent, []);
+}
+
+// Onay sorusu metin ile gecikmeli Enter arasında da çıkabilir.
+{
+  const r = rig();
+  const delivered = r.inject("codex", "kısa");
+  r.approval = true;
+  r.run(60_000);
+  assert.equal(r.enters(), 0);
+  assert.equal(await delivered, false);
+}
+
+// Teslim ilk başarılı Enter ile tamamlanır; sonradan onay sorusu varsa tekrar yok.
+{
+  const r = rig();
+  const delivered = r.inject("codex", "kısa");
+  r.run(SETTLE_MS);
+  assert.equal(await delivered, true);
+  r.approval = true;
   r.run(60_000);
   assert.equal(r.enters(), 1);
+  const dead = rig();
+  const lost = dead.inject("codex", "kısa");
+  dead.alive = false;
+  dead.run(60_000);
+  assert.equal(await lost, false);
 }
 
 // Yankı hiç durulmasa da sonsuza dek beklenmez; kapanmış terminale yazılmaz

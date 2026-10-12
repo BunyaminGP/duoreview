@@ -1,12 +1,13 @@
 // Takım akışı kuralları. Hem MCP sunucusu hem uygulamadaki hakem bunu kullanır.
 import type { DatabaseSync } from "node:sqlite";
+import { resolve } from "node:path";
 import { AGENTS, MAX_POSTS, other, type Agent } from "./db.js";
 import { t as tr } from "./i18n.js";
 
 export type Task = {
   id: number; title: string; description: string; status: string;
   assignee: Agent | null; owner: Agent | null; touches: string; summary: string | null;
-  files: string | null; rounds: number; updated_at: string;
+  files: string | null; rounds: number; updated_at: string; depends_on: string;
 };
 export type ReviewMode = "after_all" | "immediate";
 export type Kickoff = "solo" | "joint";
@@ -48,7 +49,10 @@ export const quota = (db: DatabaseSync) => Math.ceil(total(db) / AGENTS.length);
 export const mineCount = (db: DatabaseSync, a: Agent) =>
   one<{ n: number }>(db, "SELECT COUNT(*) n FROM tasks WHERE owner=? OR assignee=?", a, a)!.n;
 
-const norm = (p: string) => p.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+const norm = (p: string) => {
+  const absolute = resolve(p.replace(/\\/g, "/")).replace(/\\/g, "/").replace(/\/+$/, "");
+  return process.platform === "win32" ? absolute.toLowerCase() : absolute;
+};
 const parse = (s: string): string[] => { try { return JSON.parse(s).map(norm); } catch { return []; } };
 const overlaps = (a: string[], b: string[]) =>
   a.some((x) => b.some((y) => x === y || x.startsWith(y + "/") || y.startsWith(x + "/")));
@@ -61,13 +65,21 @@ export function conflictingTask(db: DatabaseSync, task: Task, me: Agent): Task |
     .find((t) => overlaps(mine, parse(t.touches)));
 }
 
-/** "after_all" kipinde inceleme, tüm işler (TODO/WORKING) bitince açılır. */
+export const pendingDependencies = (db: DatabaseSync, task: Task): number[] =>
+  (JSON.parse(task.depends_on) as number[]).filter((id) =>
+    one<{ status: string }>(db, "SELECT status FROM tasks WHERE id=?", id)?.status !== "DONE");
+
+/** Bağımlı işler öncüllerin incelemesini beklerken inceleme kapısını açık tutar. */
 export const reviewPhaseOpen = (db: DatabaseSync) =>
   reviewMode(db) === "immediate" ||
-  one<{ n: number }>(db, "SELECT COUNT(*) n FROM tasks WHERE status IN ('TODO','WORKING')")!.n === 0;
+  (one<{ n: number }>(db, "SELECT COUNT(*) n FROM tasks WHERE status='WORKING'")!.n === 0 &&
+    !all<Task>(db, "SELECT * FROM tasks WHERE status='TODO'").some((t) => !pendingDependencies(db, t).length));
 
 export function claimable(db: DatabaseSync, me: Agent, t: Task): string | null {
   if (t.status !== "TODO") return tr("notTodo");
+  if (one(db, "SELECT id FROM threads WHERE blocking=1 AND status='OPEN'")) return tr("planOpen");
+  const pending = pendingDependencies(db, t);
+  if (pending.length) return tr("depsPending", { ids: pending.join(", ") });
   if (t.assignee && t.assignee !== me) return tr("assignedToOther", { who: t.assignee });
   if (!t.assignee && mineCount(db, me) >= quota(db)) return tr("quotaFull", { quota: quota(db) });
   const c = conflictingTask(db, t, me);
@@ -120,17 +132,17 @@ export function nextAction(db: DatabaseSync, me: Agent): Record<string, any> {
       if (th) return myTurn(db, th, me) ? discuss(db, th) : { action: "WAIT", reason: tr("partnerReplying", { partner }) };
     }
     return me === captain
-      ? { action: "PLAN", hint: tr("planHint") }
+      ? { action: "PLAN" }
       : { action: "WAIT", reason: tr("captainPlanning", { captain }) };
   }
 
   const rework = one<Task>(db, "SELECT * FROM tasks WHERE status='REWORK' AND owner=? ORDER BY id", me);
   if (rework) {
     const last = one<{ comment: string }>(db, "SELECT comment FROM reviews WHERE task_id=? ORDER BY id DESC", rework.id);
-    return { action: "REWORK", task: rework, reviewerComment: last?.comment, hint: tr("reworkHint") };
+    return { action: "REWORK", task: rework, reviewerComment: last?.comment };
   }
   const working = one<Task>(db, "SELECT * FROM tasks WHERE status='WORKING' AND owner=? ORDER BY id", me);
-  if (working) return { action: "FINISH_WORK", task: working, hint: tr("finishHint") };
+  if (working) return { action: "FINISH_WORK", task: working };
 
   const threads = all<Thread>(db, "SELECT * FROM threads WHERE status='OPEN' ORDER BY blocking DESC, id");
   const turn = threads.find((th) => myTurn(db, th, me));
@@ -142,7 +154,6 @@ export function nextAction(db: DatabaseSync, me: Agent): Record<string, any> {
     : undefined;
   const reviewAction = toReview && {
     action: "REVIEW", task: toReview,
-    hint: tr("reviewHint"),
   };
   if (reviewAction && reviewMode(db) === "immediate") return reviewAction;
 
@@ -150,21 +161,18 @@ export function nextAction(db: DatabaseSync, me: Agent): Record<string, any> {
   const startable = todo.filter((t) => !claimable(db, me, t));
   const mineFirst = startable.find((t) => t.assignee === me) ?? startable.find((t) => !t.assignee);
   if (mineFirst) {
-    return { action: "CLAIM", task: { id: mineFirst.id, title: mineFirst.title },
-      hint: tr("claimHint", { id: mineFirst.id }) };
+    return { action: "CLAIM", task: { id: mineFirst.id, title: mineFirst.title } };
   }
   if (reviewAction) return reviewAction;
 
   const open = all<Task>(db, "SELECT id,status,owner,assignee FROM tasks WHERE status NOT IN ('DONE','DISPUTE')");
   if (!open.length) {
     const disputes = all<Task>(db, "SELECT id,title FROM tasks WHERE status='DISPUTE'");
-    return { action: "ALL_DONE", disputes, hint: disputes.length
-      ? tr("disputesHint") : tr("allApprovedHint") };
+    return { action: "ALL_DONE", disputes };
   }
   const blocked = todo.find((t) => t.assignee === me);
   return { action: "WAIT", waitingOn: open,
-    reason: blocked ? claimable(db, me, blocked) : tr("waitingPartner", { partner: other(me) }),
-    hint: tr("waitHint") };
+    reason: blocked ? claimable(db, me, blocked) : tr("waitingPartner", { partner: other(me) }) };
 }
 
 /**
@@ -230,7 +238,7 @@ export function compact(db: DatabaseSync, a: Record<string, any>, delivered: Set
       return { action: "REVIEW", id: full.id, title: full.title, by: full.owner, summary: full.summary, files, spec: spec(full.id) };
     }
     case "ALL_DONE": return { action: "ALL_DONE", disputes: (a.disputes ?? []).map((d: any) => d.id) };
-    case "ANALYZE": return { action: "ANALYZE", brief: getMeta(db, "brief", "") || undefined };
+    case "ANALYZE": return { action: "ANALYZE" };
     case "DISCUSS": {
       const th = a.thread as Thread;
       return { action: "DISCUSS", thread: th.id, kind: th.kind, topic: th.topic, task: th.task_id ?? undefined,

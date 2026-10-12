@@ -30,7 +30,7 @@ async function team() {
     };
   };
   const claude = await connect("claude"), codex = await connect("codex");
-  const done = async () => { await claude.close(); await codex.close(); db.close(); rmSync(dir, { recursive: true, force: true }); };
+  const done = async () => { await claude.close(); await codex.close(); db.close(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); };
   return { db, claude, codex, done };
 }
 const next = async (a) => (await a.call("next_action")).data;
@@ -41,7 +41,7 @@ const next = async (a) => (await a.call("next_action")).data;
   // Kurallar ve talimat ilk cevapla gelir (terminale uzun metin yapıştırılmaz), ikinci cevapta tekrarlanmaz
   const first = await next(claude);
   assert.equal(first.action, "ANALYZE");
-  assert.equal(first.brief, "projeyi analiz edin");
+  assert.equal(first.brief, undefined, "talimat yalnız rules içinde gider");
   assert.match(first.rules, /KAPTAN/); assert.match(first.rules, /Üslup/); assert.match(first.rules, /projeyi analiz edin/);
   assert.equal((await next(claude)).rules, undefined);
   const w = await next(codex);
@@ -56,11 +56,11 @@ const next = async (a) => (await a.call("next_action")).data;
   assert.equal((await next(claude)).action, "WAIT");
   assert.ok(!JSON.stringify(await next(codex)).includes("CLAUDE:"), "ortağın notu sızmamalı");
   assert.equal((await codex.call("read_thread")).data, "");
-  await codex.call("post_note", { text: "CODEX: referee.js zamanlayıcıya bağlı" });
+  const noted = await codex.call("post_note", { text: "CODEX: referee.js zamanlayıcıya bağlı" });
 
   // Tartışma: ilk söz işçide, kaptan bekler
   assert.equal((await next(claude)).action, "WAIT");
-  const d1 = await next(codex);
+  const d1 = noted.data.next;
   assert.equal(d1.action, "DISCUSS"); assert.equal(d1.kind, "kickoff");
   assert.match(d1.note, /^CLAUDE:/); assert.equal(d1.left, 4);
   assert.ok((await claude.call("discuss", { thread: d1.thread, stance: "agree", text: "x" })).err, "sıra kaptanda değil");
@@ -70,10 +70,11 @@ const next = async (a) => (await a.call("next_action")).data;
   assert.equal(d2.action, "DISCUSS");
   assert.match(d2.note, /^CODEX:/);
   assert.deepEqual(d2.posts, [{ by: "codex", stance: "object", text: "test kapsamı hakem zamanlamasını ölçmüyor" }]);
-  assert.equal((await claude.call("discuss", { thread: d1.thread, stance: "agree", text: "haklısın, plana ekliyorum" })).data, "CLOSED:agreed");
+  const agreed = await claude.call("discuss", { thread: d1.thread, stance: "agree", text: "haklısın, plana ekliyorum" });
+  assert.equal(agreed.data.result, "CLOSED:agreed");
 
   // Plan kaptanda; iş bölümü ortağın onayından geçer, o zamana dek kimse işe başlamaz
-  const plan = await next(claude);
+  const plan = agreed.data.next;
   assert.equal(plan.action, "PLAN"); assert.equal(plan.outcome, "agreed");
   assert.equal(plan.note, undefined, "aynı not oturumda ikinci kez gönderilmez");
   const posted = await claude.call("post_tasks", { tasks: [
@@ -82,6 +83,7 @@ const next = async (a) => (await a.call("next_action")).data;
   ] });
   assert.match(posted.data.warn, /claude 3, codex 1/, "dengesiz yük uyarısı");
   assert.equal((await next(claude)).action, "WAIT");
+  assert.ok((await codex.call("claim_task", { id: 4 })).err, "plan onayı doğrudan claim ile atlanamaz");
   const p1 = await next(codex);
   assert.equal(p1.action, "DISCUSS"); assert.equal(p1.kind, "plan");
   assert.match(p1.posts[0].text, /#1 a → claude \[a\/\]/);
@@ -89,23 +91,25 @@ const next = async (a) => (await a.call("next_action")).data;
   assert.equal((await next(claude)).action, "DISCUSS");
   assert.ok(!(await claude.call("assign_task", { id: 3, assignee: "codex" })).err);
   await claude.call("discuss", { thread: p1.thread, stance: "propose", text: "#3 sana geçti" });
-  await codex.call("discuss", { thread: p1.thread, stance: "agree", text: "tamam" });
-  assert.equal((await next(claude)).action, "CLAIM");
-  assert.equal((await next(codex)).action, "CLAIM");
+  const accepted = await codex.call("discuss", { thread: p1.thread, stance: "agree", text: "tamam" });
+  assert.equal(accepted.data.next.action, "FINISH_WORK");
+  assert.equal(accepted.data.next.id, 3);
+  assert.equal((await next(claude)).action, "FINISH_WORK");
 
   // Çalışırken açılan tartışma işi durdurmaz; ortak sıradaki adımında yanıtlar
-  await claude.call("claim_task", { id: 1 });
   const ot = await claude.call("open_thread", { topic: "a/ için arayüz", text: "sync mi async mi?", task: 1 });
   assert.equal((await next(claude)).action, "FINISH_WORK");
-  const q = await next(codex);
+  assert.equal((await next(codex)).action, "FINISH_WORK", "önce üstlenilmiş iş tamamlanır");
+  const q = (await codex.call("submit_task", { id: 3, summary: "c tamam", files: ["c/x"] })).data.next;
   assert.equal(q.action, "DISCUSS"); assert.equal(q.task, 1);
   // Hakem aynı tartışmanın her turunu ayrı durum sayar (dürtme sınırı tur başına)
   const s1 = signature(nextAction(db, "codex"));
   await codex.call("discuss", { thread: ot.data.thread, stance: "propose", text: "sync yeter, çağıran tek yer" });
   await claude.call("discuss", { thread: ot.data.thread, stance: "object", text: "ikinci çağıran geliyor" });
   assert.notEqual(signature(nextAction(db, "codex")), s1);
-  await codex.call("discuss", { thread: ot.data.thread, stance: "agree", text: "o zaman async" });
-  assert.equal((await next(codex)).action, "CLAIM");
+  const closed = await codex.call("discuss", { thread: ot.data.thread, stance: "agree", text: "o zaman async" });
+  assert.equal(closed.data.next.action, "FINISH_WORK");
+  assert.equal(closed.data.next.id, 4);
 
   // Kaptan TODO görevi silebilir
   assert.ok((await codex.call("drop_task", { id: 2 })).err);
@@ -126,8 +130,9 @@ const next = async (a) => (await a.call("next_action")).data;
   await codex.call("post_note", { text: "B" });
   const th = (await next(codex)).thread;
   for (const a of [codex, claude, codex]) await a.call("discuss", { thread: th, stance: "object", text: "katılmıyorum" });
-  assert.equal((await claude.call("discuss", { thread: th, stance: "object", text: "ben de" })).data, "CLOSED:split");
-  assert.equal((await next(claude)).outcome, "split");
+  const split = await claude.call("discuss", { thread: th, stance: "object", text: "ben de" });
+  assert.equal(split.data.result, "CLOSED:split");
+  assert.equal(split.data.next.outcome, "split");
   assert.ok(!(await claude.call("post_tasks", { tasks: [] })).err);
   assert.equal((await next(claude)).action, "ALL_DONE");
   assert.equal((await next(codex)).action, "ALL_DONE");

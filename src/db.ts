@@ -27,6 +27,7 @@ export function openDb(dataDir: string) {
       assignee TEXT,                       -- kaptanın atadığı ajan (boşsa serbest)
       owner TEXT,                          -- işi fiilen üstlenen
       touches TEXT NOT NULL DEFAULT '[]',  -- dokunulacak dosya/klasörler (çakışma denetimi)
+      depends_on TEXT NOT NULL DEFAULT '[]',
       summary TEXT,
       files TEXT,
       rounds INTEGER NOT NULL DEFAULT 0,
@@ -85,5 +86,13 @@ export function openDb(dataDir: string) {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const columns = db.prepare("PRAGMA table_info(tasks)").all();
+    if (!columns.some((c) => c.name === "depends_on")) {
+      db.exec("ALTER TABLE tasks ADD COLUMN depends_on TEXT NOT NULL DEFAULT '[]'");
+    }
+    db.exec("COMMIT");
+  } catch (e) { db.exec("ROLLBACK"); db.close(); throw e; }
   return db;
 }

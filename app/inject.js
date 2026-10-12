@@ -8,22 +8,25 @@ const RETRIES = 2;
 
 function createInjector({ write, lastOutputAt, awaitingApproval, now = Date.now, later = setTimeout }) {
   return function inject(agent, text) {
-    if (!write(agent, text)) return;
-    const started = now();
-    const pressEnter = (left) => {
-      if (!write(agent, "\r")) return;
-      later(() => {
-        // Gönderilen ajan sürekli çıktı üretir (çalışma göstergesi). Sessizlik, Enter'ın yutulduğunu gösterir.
-        const silent = now() - lastOutputAt(agent) >= CHECK_MS / 2;
-        // Ekranda onay sorusu varsa Enter onu kullanıcı adına cevaplar: basılmaz.
-        if (left > 0 && silent && !awaitingApproval(agent)) pressEnter(left - 1);
-      }, CHECK_MS);
-    };
-    const settle = () => {
-      if (now() - lastOutputAt(agent) >= SETTLE_MS || now() - started >= MAX_SETTLE_MS) return pressEnter(RETRIES);
-      later(settle, 100);
-    };
-    later(settle, SETTLE_MS);
+    if (awaitingApproval(agent) || !write(agent, text)) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const started = now();
+      const pressEnter = (left) => {
+        if (awaitingApproval(agent) || !write(agent, "\r")) { resolve(false); return; }
+        resolve(true);
+        later(() => {
+          // Gönderilen ajan sürekli çıktı üretir (çalışma göstergesi). Sessizlik, Enter'ın yutulduğunu gösterir.
+          const silent = now() - lastOutputAt(agent) >= CHECK_MS / 2;
+          // Ekranda onay sorusu varsa Enter onu kullanıcı adına cevaplar: basılmaz.
+          if (left > 0 && silent && !awaitingApproval(agent)) pressEnter(left - 1);
+        }, CHECK_MS);
+      };
+      const settle = () => {
+        if (now() - lastOutputAt(agent) >= SETTLE_MS || now() - started >= MAX_SETTLE_MS) return pressEnter(RETRIES);
+        later(settle, 100);
+      };
+      later(settle, SETTLE_MS);
+    });
   };
 }
 

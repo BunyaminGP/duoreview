@@ -10,16 +10,8 @@ export const getLang = () => lang;
 export const MESSAGES = {
   tr: {
     // akış (flow.ts)
-    planHint: "İşleri post_tasks ile panoya yaz (her görevde touches ve assignee ver), sonra next_action çağır.",
     captainPlanning: "Kaptan ({captain}) planı hazırlıyor.",
-    reworkHint: "Yorumları uygula, sonra submit_task çağır.",
-    finishHint: "İşi bitir ve submit_task çağır.",
-    reviewHint: "Değişen dosyaları gerçekten oku/test et, sonra review_task çağır. Kör onay verme.",
-    claimHint: "claim_task({id}) çağır ve işe başla.",
-    disputesHint: "İhtilaflı görevleri kullanıcıya raporla.",
-    allApprovedHint: "Her şey onaylandı. report çağır ve kullanıcıya özet ver.",
     waitingPartner: "{partner} ajanının bitirmesi/incelemesi bekleniyor.",
-    waitHint: "Beklemedesin. Uygulama seni uyandıracak; sen yoklama yapma.",
     notTodo: "Görev TODO değil.",
     assignedToOther: "Bu görev {who} ajanına atanmış.",
     quotaFull: "Payın doldu ({quota}).",
@@ -36,11 +28,11 @@ export const MESSAGES = {
     errPrefix: "HATA",
     needAgentId: 'AGENT_ID env zorunlu: "claude" veya "codex"',
     needDataDir: "DUOREVIEW_DIR env zorunlu (veri klasörü)",
-    dNextAction: "Sıradaki adımı verir. Her adımdan sonra çağır.",
-    dPostTasks: "[Kaptan] Görev ekle. touches=dokunulacak dosya/klasörler, assignee=claude|codex.",
+    dNextAction: "Sıradaki adımı verir; sıradaki iş senin görevinse üstlenir. Cevabında next olmayan adımdan sonra çağır.",
+    dPostTasks: "[Kaptan] Görev ekle. touches=dokunulacak dosya/klasörler, assignee=claude|codex, depends_on=önce bitmesi gereken mevcut görev id'leri.",
     dAssignTask: "[Kaptan] TODO görevi ata/yeniden ata.",
-    dStatus: "Pano özeti (satır başına bir görev). detail=true: özet ve son inceleme notları da gelir.",
-    dClaimTask: "TODO görevi üstlen; cevapta görev tarifi gelir, hemen çalış.",
+    dStatus: "Pano özeti (satır başına bir görev). detail=true: özet ve son inceleme notları da gelir. id: o görevin tam tarifi.",
+    dClaimTask: "Belirli bir TODO görevi üstlen (next_action sıradakini kendisi üstlenir); cevapta görev tarifi gelir.",
     dSubmitTask: "İşi incelemeye gönder. summary en çok 3 satır.",
     dReviewTask:
       "Ortağın görevini incele. request_changes YALNIZ severity=blocker (çökme, derleme kırığı, normal kullanımda veri kaybı) " +
@@ -79,9 +71,11 @@ export const MESSAGES = {
     roleWorker: "Rolün: işçi; kaptan {captain}.",
     briefLine: "Kullanıcının talimatı: {brief}",
     loop:
-      "Döngü: her adımdan sonra next_action çağır, dönen action'ı uygula. CLAIM→claim_task | FINISH_WORK→işi yap, submit_task | " +
+      "Döngü: next_action ile başla, dönen action'ı uygula. Araç cevabında next alanı varsa sıradaki adım odur; yoksa next_action çağır. " +
+      "FINISH_WORK→görev sana verildi: işi yap, submit_task | " +
       "REVIEW→git diff/grep ile değişen kısımları oku, mümkünse çalıştır, review_task | REWORK→bulguları düzelt, submit_task | " +
       "DISCUSS→gelen not ve mesajları oku, discuss ile yanıtla | WAIT→dur, uygulama seni uyandırır, yoklama yapma | " +
+      "Görev tarifini yeniden okumak için status(id). " +
       "ALL_DONE→status(detail) ile kullanıcıya kısa özet ver. Ortağın görevindeki dosyalara dokunma. " +
       "Tasarım kararı belirsizse koda başlamadan open_thread ile ortağına sor. " +
       "Projenin kurallarına uy; commit, push, merge yapma, anahtar dosyalarına dokunma.",
@@ -121,18 +115,15 @@ export const MESSAGES = {
     evThreadOpened: "tartışma #{id} açtı: {topic}",
     evNoTasks: "plan: görev çıkmadı (yalnız inceleme)",
     evDropped: "#{id} görevini sildi",
+    planOpen: "Plan tartışması bitmeden görev alınamaz.",
+    depsPending: "Öncül görevler bitmedi: {ids}.",
+    badDeps: "depends_on içinde olmayan görev: {ids}.",
+    isDependency: "#{id} başka bir görevin öncülü; silinemez.",
+    planDetail: "Ayrıntı: status(id)",
   },
   en: {
-    planHint: "Post the work to the board with post_tasks (give each task touches and assignee), then call next_action.",
     captainPlanning: "The captain ({captain}) is preparing the plan.",
-    reworkHint: "Apply the review comments, then call submit_task.",
-    finishHint: "Finish the work and call submit_task.",
-    reviewHint: "Actually read/test the changed files, then call review_task. Do not rubber-stamp.",
-    claimHint: "Call claim_task({id}) and start working.",
-    disputesHint: "Report the disputed tasks to the user.",
-    allApprovedHint: "Everything is approved. Call report and give the user a summary.",
     waitingPartner: "Waiting for {partner} to finish or review.",
-    waitHint: "You are waiting. The app will wake you; do not poll.",
     notTodo: "Task is not TODO.",
     assignedToOther: "This task is assigned to {who}.",
     quotaFull: "Your share is full ({quota}).",
@@ -148,11 +139,11 @@ export const MESSAGES = {
     errPrefix: "ERROR",
     needAgentId: 'AGENT_ID env is required: "claude" or "codex"',
     needDataDir: "DUOREVIEW_DIR env is required (data directory)",
-    dNextAction: "Returns the next step. Call it after every step.",
-    dPostTasks: "[Captain] Add tasks. touches=files/folders to be modified, assignee=claude|codex.",
+    dNextAction: "Returns the next step and takes the task if it is yours. Call it after a step whose reply had no next.",
+    dPostTasks: "[Captain] Add tasks. touches=files/folders to be modified, assignee=claude|codex, depends_on=ids of existing tasks that must be done first.",
     dAssignTask: "[Captain] Assign/reassign a TODO task.",
-    dStatus: "Board summary (one task per line). detail=true also returns summaries and the latest review notes.",
-    dClaimTask: "Take a TODO task; the reply contains the task spec, start working right away.",
+    dStatus: "Board summary (one task per line). detail=true also returns summaries and the latest review notes. id: that task's full spec.",
+    dClaimTask: "Take a specific TODO task (next_action takes the next one by itself); the reply contains the task spec.",
     dSubmitTask: "Submit the work for review. summary: 3 lines at most.",
     dReviewTask:
       "Review your partner's task. request_changes ONLY for severity=blocker (crash, broken build, data loss in normal use) " +
@@ -191,9 +182,11 @@ export const MESSAGES = {
     roleWorker: "Your role: worker; the captain is {captain}.",
     briefLine: "The user's instruction: {brief}",
     loop:
-      "Loop: call next_action after every step and carry out the returned action. CLAIM→claim_task | FINISH_WORK→do the work, submit_task | " +
+      "Loop: start with next_action and carry out the returned action. If a tool reply has a next field, that is your next step; otherwise call next_action. " +
+      "FINISH_WORK→the task is yours: do the work, submit_task | " +
       "REVIEW→read the changed parts with git diff/grep, run them if you can, review_task | REWORK→fix the findings, submit_task | " +
       "DISCUSS→read the incoming note and messages, answer with discuss | WAIT→stop, the app wakes you, do not poll | " +
+      "To read a task spec again: status(id). " +
       "ALL_DONE→give the user a short summary via status(detail). Do not touch files of your partner's task. " +
       "If a design decision is unclear, ask your partner with open_thread before writing code. " +
       "Follow the project's rules; do not commit, push, merge, or touch key files.",
@@ -233,6 +226,11 @@ export const MESSAGES = {
     evThreadOpened: "opened discussion #{id}: {topic}",
     evNoTasks: "plan: no tasks (analysis only)",
     evDropped: "deleted task #{id}",
+    planOpen: "No task can be taken before the plan discussion ends.",
+    depsPending: "Prerequisite tasks are not done: {ids}.",
+    badDeps: "depends_on names tasks that do not exist: {ids}.",
+    isDependency: "#{id} is a prerequisite of another task; it cannot be deleted.",
+    planDetail: "Details: status(id)",
   },
 } as const;
 

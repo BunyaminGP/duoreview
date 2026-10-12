@@ -22,7 +22,8 @@ different vendors have different blind spots, so here **Claude's work is reviewe
 - **You break ties.** After 3 review rounds without agreement the task becomes a *dispute* and the decision is yours: accept, re-review, or send it back with your instruction.
 - **File-conflict guard.** Each task lists the files it touches; an agent cannot start a task that overlaps with a partner's unfinished one.
 - **Quota aware.** Live 5-hour and weekly usage meters. When a quota is full, the app stops nudging that agent instead of burning tokens.
-- **Lean on tokens.** The task spec is sent once per session, replies are small, and effort/model profiles (economy / balanced / powerful) are one click away. The model menus list every model your CLIs offer (Codex's from its own cache), with the effort levels each one supports.
+- **Task dependencies.** A task can name tasks that must be done first (`depends_on`); it cannot be started before they are approved.
+- **Lean on tokens.** A reply to `submit_task`, `review_task`, `post_note`, `discuss` and `post_tasks` carries the next step, and `next_action` takes the next task by itself, so a plain task (take, submit, reviewer wakes, review) takes four tool calls in the measured scenario (`npm run tokens`); kickoff, discussions and rework rounds come on top. The header shows each agent's tool calls and characters sent/received (counted by the MCP server; not tokens). The task spec is sent once per session (`status(id)` returns it again), replies are small, and effort/model profiles (economy / balanced / powerful) are one click away. The model menus list every model your CLIs offer (Codex's from its own cache), with the effort levels each one supports.
 - **Style rules for the agents.** The rules sent to both agents ban the usual filler in code and prose: comments that restate the code, unrequested abstractions and files, openers, closing recaps, praise, emoji. Reviewers treat unrequested files and unrelated changes as `major`.
 - **Does not touch your global config.** MCP wiring is passed per session (`--mcp-config` for Claude, `-c` overrides for Codex). Board data is stored outside your project, so your repo stays clean.
 - **English and Turkish UI, prompts and tool texts** (language menu in the header).
@@ -66,6 +67,7 @@ Set the same `DUOREVIEW_DIR` for both agents and a different `AGENT_ID` (`claude
 ```
 
 Tools: `next_action`, `post_tasks`, `assign_task`, `drop_task`, `claim_task`, `submit_task`, `review_task`, `status`, `post_note`, `discuss`, `open_thread`, `read_thread`, `send_prompt`, `read_inbox`.
+`next_action` hands the agent its next task directly; `claim_task` is only for picking a specific one. `status(id)` returns one task in full.
 Set the kickoff with a row in the `meta` table (`kickoff` = `joint` or `solo`, default `solo`); the app does this for you.
 See [TEAM.md](TEAM.md) for the loop the agents follow.
 

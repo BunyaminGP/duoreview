@@ -43,7 +43,7 @@
       emptyBoard: "Henüz görev yok. Plan yazılınca burada görünür.",
       moreDisputes: "  (+{n} ihtilaf daha)",
       now: "şimdi", renewed: "yenilendi", dayHour: "{d}g {h}sa", hourMin: "{h}sa {m}dk", min: "{m}dk",
-      pct: "%{n}", w5h: "5sa", wWeek: "hafta", usageWaiting: "kullanım: bekleniyor",
+      pct: "%{n}", w5h: "5sa", wWeek: "hafta", usageWaiting: "kullanım: bekleniyor", callsChars: "{n} çağrı · ↑{up} ↓{down} kr",
       ctx: "bağlam %{n}", minAgo: "{n} dk önceki veri", planLabel: "plan: {plan}",
       // --- ana süreç ---
       defaultBrief: "docs klasöründeki belgeleri oku; yapılacak işleri çıkar ve panoya yaz.",
@@ -113,7 +113,7 @@
       emptyBoard: "No tasks yet. They appear here once the plan is written.",
       moreDisputes: "  (+{n} more disputes)",
       now: "now", renewed: "renewed", dayHour: "{d}d {h}h", hourMin: "{h}h {m}m", min: "{m}m",
-      pct: "{n}%", w5h: "5h", wWeek: "week", usageWaiting: "usage: waiting",
+      pct: "{n}%", w5h: "5h", wWeek: "week", usageWaiting: "usage: waiting", callsChars: "{n} calls · ↑{up} ↓{down} chars",
       ctx: "context {n}%", minAgo: "data from {n} min ago", planLabel: "plan: {plan}",
       defaultBrief: "Read the documents in the docs folder; extract the work to be done and post it to the board.",
       evTeamStarted: "team started. captain: {captain}, review: {mode}, kickoff: {kickoff}",

@@ -3,12 +3,11 @@
 Bu projede `duoreview` MCP sunucusu üzerinden bir ortağınla çalışıyorsun. Bu dosya geçerli olduğunda aşağıdaki akışı izle.
 
 ## Döngü
-1. Göreve başlarken ve **her adımdan sonra** `next_action` çağır. İlk cevapta rolün, kullanıcının talimatı ve kurallar gelir. Dönen `action` ne diyorsa onu yap:
+1. Göreve `next_action` ile başla. İlk cevapta rolün, kullanıcının talimatı ve kurallar gelir. Araç cevabında `next` alanı varsa sıradaki adım odur; yoksa `next_action` çağır. `action` ne diyorsa onu yap:
    - `ANALYZE` → talimatı kendi başına yerine getir (kodu oku, talimat istiyorsa internette araştır) ve bulgularını `post_note` ile yaz. Ortağını bekleme; notlar ikiniz de yazana kadar birbirinizden gizlidir.
    - `DISCUSS` → gelen notu ve mesajları oku, `discuss(thread, stance, text)` ile yanıtla. `agree` tartışmayı kapatır; `object` gerekçe ister; `propose` yeni öneridir. Mesaj sınırı dolunca uzlaşma yoksa tartışma "ayrışma" olarak kapanır ve kullanıcıya gösterilir.
-   - `PLAN` (kaptan) → iki notu ve tartışmayı birleştir, `post_tasks` ile işleri iki ajana dengeli böl. İş çıkmıyorsa `post_tasks(tasks: [])`. Plan da ortağın onayından geçer.
-   - `CLAIM` → `claim_task` ile bir görev al.
-   - `FINISH_WORK` → işi yap, bitince `submit_task(id, summary, files)`.
+   - `PLAN` (kaptan) → iki notu ve tartışmayı birleştir, `post_tasks` ile işleri iki ajana dengeli böl; başka görevin bitmesini bekleyen işe `depends_on` ver. İş çıkmıyorsa `post_tasks(tasks: [])`. Plan da ortağın onayından geçer.
+   - `FINISH_WORK` → görev sana verildi (tarif cevapta; yeniden okumak için `status(id)`). İşi yap, bitince `submit_task(id, summary, files)`.
    - `REVIEW` → ortağın görevini incele (aşağıdaki kurallar), `review_task` çağır.
    - `REWORK` → `fix` içindeki istekleri uygula, tekrar `submit_task`.
    - `WAIT` → ortağını bekliyorsun. Uygulama seni uyandırır; yoklama yapma.

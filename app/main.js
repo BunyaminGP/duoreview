@@ -133,7 +133,8 @@ const inject = createInjector({
 
 // ---- pano ----------------------------------------------------------------
 function board() {
-  const tasks = db.prepare("SELECT id,title,status,assignee,owner,rounds FROM tasks ORDER BY id").all();
+  const tasks = db.prepare("SELECT id,title,status,assignee,owner,rounds,depends_on FROM tasks ORDER BY id").all()
+    .map((x) => ({ ...x, depends_on: JSON.parse(x.depends_on) }));
   const events = db.prepare("SELECT id,actor,text,created_at FROM events ORDER BY id DESC LIMIT 80").all().reverse();
   const meta = Object.fromEntries(db.prepare("SELECT key,value FROM meta").all().map((r) => [r.key, r.value]));
   const threads = db.prepare(

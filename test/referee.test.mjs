@@ -96,6 +96,39 @@ assert.ok(take().every(([a]) => a !== "codex"));
 const ev = db.prepare("SELECT text FROM events WHERE actor='app'").all();
 assert.ok(ev.length >= 6);
 console.log("REFEREE OK (", ev.length, "olay )");
+// Gecikmeli teslim bitmeden mesaj okunmuş sayılmaz ve ikinci kez gönderilmez.
+{
+  let complete;
+  let writes = 0;
+  const delayed = await createReferee({
+    distDir: resolve("dist"), getDb: () => db, now: () => t,
+    write: () => { writes++; return new Promise((resolve) => { complete = resolve; }); },
+  });
+  const id = Number(run(db, "INSERT INTO messages(sender,recipient,kind,text) VALUES ('claude','codex','prompt','teslim')").lastInsertRowid);
+  const read = () => db.prepare("SELECT read FROM messages WHERE id=?").get(id).read;
+  delayed.start("codex"); advance(6000); delayed.tick();
+  assert.equal(read(), 0);
+  advance(10000); delayed.tick();
+  assert.equal(writes, 1);
+  complete(false); await Promise.resolve();
+  assert.equal(read(), 0, "başarısız teslim yeniden denenebilir");
+  advance(6000); delayed.tick();
+  assert.equal(writes, 2);
+  complete(true); await Promise.resolve();
+  assert.equal(read(), 1);
+
+  delayed.queueInitial("codex", "başlangıç");
+  advance(6000); delayed.tick();
+  complete(false); await Promise.resolve();
+  advance(6000); delayed.tick();
+  assert.equal(writes, 4, "başarısız başlangıç mesajı kaybolmaz");
+  complete(true); await Promise.resolve();
+
+  const stoppedId = Number(run(db, "INSERT INTO messages(sender,recipient,kind,text) VALUES ('claude','codex','prompt','durdu')").lastInsertRowid);
+  advance(6000); delayed.tick(); delayed.stop("codex");
+  complete(true); await Promise.resolve();
+  assert.equal(db.prepare("SELECT read FROM messages WHERE id=?").get(stoppedId).read, 0, "eski oturum teslimi yeni oturuma yazılmaz");
+}
 db.close(); rmSync(dir, { recursive: true, force: true });
 
 // --- Kota koruması: kota doluysa ajana hiçbir şey yazılmaz, dolunca yenilenince sürer ---

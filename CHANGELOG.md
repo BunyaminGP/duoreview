@@ -10,4 +10,7 @@
 - Notes and discussion tab with a side-by-side reader and Markdown export.
 - Rules, role and brief are delivered with the first `next_action` reply instead of being typed into the terminal; style rules against filler in code and prose.
 - Enter is sent after the terminal echo settles and retried if the agent did not start; Codex startup menus (update, folder trust) count as approval prompts; a bare "approve" on screen no longer does.
+- Chained replies: mutating tools return the next step and `next_action` takes the next task itself (four tool calls for a plain task in the measured scenario; kickoff, discussions and rework excluded). `status(id)` returns one task in full.
+- Task dependencies (`depends_on` in `post_tasks`); a task cannot be taken while the plan discussion is open; path normalisation in the file-conflict guard.
+- Per-agent counters for tool calls and characters sent/received, shown in the header.
 - Model menus list all models (Codex from `~/.codex/models_cache.json`) with per-model effort levels.

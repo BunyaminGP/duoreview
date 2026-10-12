@@ -199,7 +199,7 @@ function renderDecision(tasks) {
 }
 
 // ---- kalan kullanım -------------------------------------------------------
-let lastUsage = {};
+let lastUsage = {}, lastMeta = {};
 const fmtRemain = (ms) => {
   if (ms <= 0) return t("now");
   const dk = Math.ceil(ms / 60000);
@@ -220,11 +220,14 @@ function meter(label, w) {
 function renderUsage() {
   for (const a of AGENTS) {
     const u = lastUsage[a], box = $("usage-" + a);
-    if (!u || !u.ok) { box.replaceChildren(el("span", "none", u?.note || t("usageWaiting"))); box.title = ""; continue; }
+    // MCP sunucusunun saydığı araç çağrıları ve karakterler (token değil)
+    const n = lastMeta["calls:" + a];
+    const calls = n ? [el("span", "", t("callsChars", { n, up: lastMeta["chars_in:" + a], down: lastMeta["chars_out:" + a] }))] : [];
+    if (!u || !u.ok) { box.replaceChildren(el("span", "none", u?.note || t("usageWaiting")), ...calls); box.title = ""; continue; }
     const parts = [];
     if (u.five) parts.push(meter(t("w5h"), u.five));
     if (u.week) parts.push(meter(t("wWeek"), u.week));
-    box.replaceChildren(...parts);
+    box.replaceChildren(...parts, ...calls);
     const ago = u.asOf ? t("minAgo", { n: Math.round((Date.now() - u.asOf) / 60000) }) : "";
     box.title = [u.plan && t("planLabel", { plan: u.plan }), u.model, u.ctx != null && t("ctx", { n: u.ctx }), ago].filter(Boolean).join(" · ");
   }
@@ -307,8 +310,9 @@ function renderTalk(notes, threads) {
   if (!$("reader").hidden) openReader();
 }
 
-function renderBoard({ tasks, events, agents, usage, notes = [], threads = [] }) {
+function renderBoard({ tasks, events, agents, usage, meta: counters = {}, notes = [], threads = [] }) {
   lastUsage = usage || {};
+  lastMeta = counters;
   renderUsage();
   renderTalk(notes, threads);
   renderDecision(tasks);
@@ -333,6 +337,7 @@ function renderBoard({ tasks, events, agents, usage, notes = [], threads = [] })
     const who = x.owner || x.assignee;
     if (who) meta.append(el("span", "", who));
     if (x.rounds) meta.append(el("span", "", t("round", { n: x.rounds })));
+    if (x.depends_on.length) meta.append(el("span", "", "← " + x.depends_on.map((d) => "#" + d).join(" ")));
     li.append(meta);
     return li;
   }) : [el("li", "empty", t("emptyBoard"))]));

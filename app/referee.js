@@ -24,7 +24,7 @@ async function createReferee({ distDir, getDb, write, blocked = () => null, now 
   const st = Object.fromEntries(AGENTS.map((a) => [a, fresh()]));
 
   function fresh() {
-    return { running: false, startedAt: 0, lastOutput: 0, tail: "", initial: null, nudge: { sig: "", at: 0, count: 0 }, status: "off", flow: "", why: "", quotaLogged: false };
+    return { running: false, sending: false, startedAt: 0, lastOutput: 0, tail: "", initial: null, nudge: { sig: "", at: 0, count: 0 }, status: "off", flow: "", why: "", quotaLogged: false };
   }
 
   const api = {
@@ -48,6 +48,7 @@ async function createReferee({ distDir, getDb, write, blocked = () => null, now 
       for (const agent of AGENTS) {
         const s = st[agent];
         if (!s.running) { s.status = "off"; continue; }
+        if (s.sending) { s.status = "busy"; continue; }
         const quiet = now() - s.lastOutput >= idleMs && now() - s.startedAt >= minStartMs;
         s.status = !quiet ? "busy" : APPROVAL.test(s.tail) ? "approval" : "idle";
 
@@ -64,19 +65,29 @@ async function createReferee({ distDir, getDb, write, blocked = () => null, now 
         }
         if (s.quotaLogged) { s.quotaLogged = false; s.why = ""; flow.logEvent(db, "app", t("evQuotaRenewed", { agent })); }
 
-        const say = (text, why) => {
-          write(agent, text.replace(/\s*\n\s*/g, " "));
+        const say = (text, why, delivered = () => {}) => {
+          s.sending = true;
           s.lastOutput = now();
           s.status = "busy";
-          flow.logEvent(db, "app", `${agent}: ${why}`);
+          const finish = (ok) => {
+            s.sending = false;
+            if (ok === false || st[agent] !== s || getDb() !== db) return;
+            delivered();
+            flow.logEvent(db, "app", `${agent}: ${why}`);
+          };
+          try {
+            const result = write(agent, text.replace(/\s*\n\s*/g, " "));
+            if (result?.then) result.then(finish, () => finish(false));
+            else finish(result);
+          } catch { finish(false); }
         };
 
-        if (s.initial) { const txt = s.initial; s.initial = null; say(txt, t("evProtocolSent")); continue; }
+        if (s.initial) { const txt = s.initial; say(txt, t("evProtocolSent"), () => { if (s.initial === txt) s.initial = null; }); continue; }
 
         const msg = db.prepare("SELECT id, sender, text FROM messages WHERE recipient=? AND kind='prompt' AND read=0 ORDER BY id LIMIT 1").get(agent);
         if (msg) {
-          db.prepare("UPDATE messages SET read=1 WHERE id=?").run(msg.id);
-          say(t("promptFrom", { sender: msg.sender, text: msg.text }), t("evPromptDelivered", { sender: msg.sender }));
+          say(t("promptFrom", { sender: msg.sender, text: msg.text }), t("evPromptDelivered", { sender: msg.sender }),
+            () => db.prepare("UPDATE messages SET read=1 WHERE id=?").run(msg.id));
           continue;
         }
 
