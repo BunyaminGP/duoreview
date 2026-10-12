@@ -49,29 +49,63 @@ const PROFILES = {
   dengeli: { models: { claude: "sonnet", codex: "" }, efforts: { claude: "medium", codex: "medium" } },
   guclu: { models: { claude: "opus", codex: "" }, efforts: { claude: "high", codex: "high" } },
 };
+// Model seçimi: tam liste bir <select> içinde durur; listede olmayan ad "elle yaz" ile girilir.
+const CUSTOM = "__custom__";
+const FALLBACK_EFFORTS = ["low", "medium", "high", "xhigh"];
+let modelLists = Object.fromEntries(AGENTS.map((a) => [a, { models: [], current: "" }]));
+const option = (value, text) => { const o = document.createElement("option"); o.value = value; o.textContent = text; return o; };
+const modelOf = (a) => ($("model-" + a).value === CUSTOM ? $(`model-${a}-custom`).value.trim() : $("model-" + a).value);
+
+function fillEfforts(a, value = $("effort-" + a).value) {
+  const { models, current } = modelLists[a];
+  const m = models.find((x) => x.id === (modelOf(a) || current));
+  const efforts = m?.efforts?.length ? m.efforts : FALLBACK_EFFORTS;
+  if (value && !efforts.includes(value)) value = "";
+  $("effort-" + a).replaceChildren(option("", t("effortDefault")), ...efforts.map((e) => option(e, e)));
+  $("effort-" + a).value = value;
+}
+function fillModels(a, value) {
+  const { models, current } = modelLists[a];
+  const opts = [option("", current ? t("modelDefaultIs", { model: current }) : t("modelDefault"))];
+  for (const m of models) opts.push(option(m.id, `${m.alias ? t("modelLatest", { name: m.label }) : m.label}  ·  ${m.id}`));
+  if (value && !models.some((m) => m.id === value)) opts.push(option(value, value));
+  opts.push(option(CUSTOM, t("modelCustom")));
+  $("model-" + a).replaceChildren(...opts);
+  $("model-" + a).value = value;
+  $(`model-${a}-custom`).hidden = true;
+}
+
 const currentCfg = () => ({
-  captain: $("captain").value, reviewMode: $("mode").value, brief: $("brief").value.trim(),
+  captain: $("captain").value, reviewMode: $("mode").value, kickoff: $("kickoff").value, brief: $("brief").value.trim(),
   profile: $("profile").value,
-  models: { claude: $("model-claude").value.trim(), codex: $("model-codex").value.trim() },
+  models: { claude: modelOf("claude"), codex: modelOf("codex") },
   efforts: { claude: $("effort-claude").value, codex: $("effort-codex").value },
 });
 const save = () => window.bridge.saveCfg(currentCfg());
-for (const id of ["captain", "mode", "brief"]) $(id).addEventListener("change", save);
+for (const id of ["captain", "mode", "kickoff", "brief"]) $(id).addEventListener("change", save);
 
 function applyProfile(name) {
   const p = PROFILES[name];
   if (!p) return;
-  for (const a of AGENTS) { $("model-" + a).value = p.models[a]; $("effort-" + a).value = p.efforts[a]; }
+  for (const a of AGENTS) { fillModels(a, p.models[a]); fillEfforts(a, p.efforts[a]); }
 }
 $("profile").addEventListener("change", () => { applyProfile($("profile").value); save(); });
 // Elle değiştirilirse profil "Özel" olur
-for (const a of AGENTS) for (const id of ["model-" + a, "effort-" + a]) {
-  $(id).addEventListener("change", () => { $("profile").value = "ozel"; save(); });
+const custom = () => { $("profile").value = "ozel"; save(); };
+for (const a of AGENTS) {
+  const input = $(`model-${a}-custom`);
+  $("model-" + a).addEventListener("change", () => {
+    if ($("model-" + a).value === CUSTOM) { input.hidden = false; input.value = ""; input.focus(); return; }
+    input.hidden = true;
+    fillEfforts(a);
+    custom();
+  });
+  input.addEventListener("change", () => { fillModels(a, input.value.trim()); fillEfforts(a); custom(); });
+  $("effort-" + a).addEventListener("change", custom);
 }
 window.bridge.listModels().then((l) => {
-  for (const a of AGENTS) {
-    $("models-" + a).replaceChildren(...(l[a] || []).map((m) => { const o = document.createElement("option"); o.value = m; return o; }));
-  }
+  modelLists = l;
+  for (const a of AGENTS) { fillModels(a, modelOf(a)); fillEfforts(a); }
 });
 
 window.bridge.onState((s) => {
@@ -92,11 +126,12 @@ window.bridge.onState((s) => {
   }));
   $("captain").value = s.cfg.captain;
   $("mode").value = s.cfg.reviewMode;
+  $("kickoff").value = s.cfg.kickoff;
   $("brief").value = s.cfg.brief;
   $("profile").value = s.cfg.profile || "dengeli";
-  for (const a of AGENTS) { $("model-" + a).value = s.cfg.models?.[a] ?? ""; $("effort-" + a).value = s.cfg.efforts?.[a] ?? ""; }
-  const lock = ["project", "pick", "captain", "mode", "brief", "reset", "team", "profile"];
-  for (const a of AGENTS) lock.push("model-" + a, "effort-" + a);
+  for (const a of AGENTS) { fillModels(a, s.cfg.models?.[a] ?? ""); fillEfforts(a, s.cfg.efforts?.[a] ?? ""); }
+  const lock = ["project", "pick", "captain", "mode", "kickoff", "brief", "reset", "team", "profile"];
+  for (const a of AGENTS) lock.push("model-" + a, `model-${a}-custom`, "effort-" + a);
   for (const id of lock) $(id).disabled = isRunning;
   for (const a of AGENTS) setRole(a, s.cfg.captain);
 });
@@ -196,9 +231,86 @@ function renderUsage() {
 }
 setInterval(renderUsage, 15000); // geri sayım dakikada bir değişir; board gelince de yenilenir
 
-function renderBoard({ tasks, events, agents, usage }) {
+// ---- notlar ve tartışma ----------------------------------------------------
+const label = (k) => (STR[curLang]["k_" + k] ? t("k_" + k) : k);
+const chip = (k) => el("span", `chip o-${k}`, label(k));
+let talkSig = "";
+
+function showTab(talk) {
+  $("tab-talk").classList.toggle("on", talk);
+  $("tab-board").classList.toggle("on", !talk);
+  $("talk-list").hidden = !talk;
+  $("view-board").hidden = talk;
+}
+$("tab-board").addEventListener("click", () => showTab(false));
+$("tab-talk").addEventListener("click", () => showTab(true));
+$("reader-close").addEventListener("click", () => { $("reader").hidden = true; fitAll(); });
+$("talk-export").addEventListener("click", () => window.bridge.exportTalk());
+
+async function openReader(anchor) {
+  const { notes, threads } = await window.bridge.talk();
+  const body = $("reader-body");
+  const keep = $("reader").hidden ? 0 : body.scrollTop;
+  const doc = (n) => {
+    const d = el("div", "doc"); d.id = "note-" + n.id;
+    const h = el("h3");
+    h.append(el("span", "who-" + n.author, n.author), el("span", "", n.title || label(n.kind)));
+    d.append(h, el("p", "text", n.text));
+    return d;
+  };
+  const kick = notes.filter((n) => n.kind === "kickoff"), rest = notes.filter((n) => n.kind !== "kickoff");
+  const parts = [];
+  // Açılış incelemeleri yan yana: farklar göz gezdirerek görülsün
+  for (let i = 0; i < kick.length; i += 2) { const pair = el("div", "pair"); pair.append(...kick.slice(i, i + 2).map(doc)); parts.push(pair); }
+  parts.push(...rest.map(doc));
+  for (const th of threads) {
+    const box = el("div", "thread"); box.id = "thread-" + th.id;
+    const h = el("h3");
+    h.append(el("span", "", `#${th.id} ${th.topic}`), chip(th.outcome ?? th.status));
+    box.append(h);
+    if (th.outcome === "split") box.append(el("p", "hint", t("splitHint")));
+    for (const p of th.posts) {
+      const post = el("div", "post " + p.author);
+      const by = el("div", "by");
+      by.append(el("b", "who-" + p.author, p.author), document.createTextNode(` · ${label(p.stance)} · ${p.created_at}`));
+      post.append(by, el("p", "text", p.text));
+      box.append(post);
+    }
+    parts.push(box);
+  }
+  body.replaceChildren(...(parts.length ? parts : [el("p", "empty", t("talkEmpty"))]));
+  $("reader").hidden = false;
+  if (anchor) document.getElementById(anchor)?.scrollIntoView(); else body.scrollTop = keep;
+}
+
+function renderTalk(notes, threads) {
+  const open = threads.filter((x) => x.status === "OPEN").length;
+  $("talk-count").textContent = open ? `(${open})` : "";
+  const sig = JSON.stringify([notes, threads, curLang]);
+  if (sig === talkSig) return;
+  talkSig = sig;
+  const item = (anchor, who, title, meta) => {
+    const li = el("li");
+    li.append(el("span", "who-" + who, who + " "), document.createTextNode(title));
+    const m = el("div", "meta"); m.append(...meta); li.append(m);
+    li.addEventListener("click", () => openReader(anchor));
+    return li;
+  };
+  const rows = [];
+  if (notes.length) rows.push(el("li", "head", t("talkNotes")));
+  rows.push(...notes.map((n) => item("note-" + n.id, n.author, n.title || label(n.kind), [el("span", "", t("nChars", { n: n.size }))])));
+  if (threads.length) rows.push(el("li", "head", t("talkThreads")));
+  rows.push(...threads.map((x) => item("thread-" + x.id, "", `#${x.id} ${x.topic}`,
+    [chip(x.outcome ?? x.status), el("span", "", label(x.kind)), el("span", "", t("nPosts", { n: x.posts }))])));
+  $("talk-list").replaceChildren(...(rows.length ? rows : [el("li", "empty", t("talkEmpty"))]));
+  // Açık okuma görünümü yeni not ya da mesaj gelince kendini yeniler
+  if (!$("reader").hidden) openReader();
+}
+
+function renderBoard({ tasks, events, agents, usage, notes = [], threads = [] }) {
   lastUsage = usage || {};
   renderUsage();
+  renderTalk(notes, threads);
   renderDecision(tasks);
   for (const a of AGENTS) {
     const { status, flow } = agents[a];

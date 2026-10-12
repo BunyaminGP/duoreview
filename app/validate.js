@@ -4,7 +4,8 @@ const fs = require("node:fs");
 
 const AGENTS = ["claude", "codex"];
 const MODES = ["after_all", "immediate"];
-const EFFORTS = ["", "low", "medium", "high", "xhigh", "max"];
+const KICKOFFS = ["joint", "solo"];
+const EFFORTS = ["", "low", "medium", "high", "xhigh", "max", "ultra"];
 const PROFILES = ["ekonomik", "dengeli", "guclu", "ozel"];
 const DECISIONS = ["accept", "rework", "rereview"];
 const MODEL_RE = /^[\w.:/-]{0,80}$/;
@@ -21,6 +22,7 @@ function sanitizeCfg(c) {
   return {
     captain: pick(c.captain, AGENTS, "claude"),
     reviewMode: pick(c.reviewMode, MODES, "after_all"),
+    kickoff: pick(c.kickoff, KICKOFFS, "joint"),
     profile: pick(c.profile, PROFILES, "dengeli"),
     brief: typeof c.brief === "string" ? c.brief.slice(0, 4000) : "",
     models: { claude: model(c.models?.claude), codex: model(c.models?.codex) },
@@ -28,4 +30,4 @@ function sanitizeCfg(c) {
   };
 }
 
-module.exports = { AGENTS, MODES, EFFORTS, PROFILES, DECISIONS, isAgent, dim, isDir, sanitizeCfg };
+module.exports = { AGENTS, MODES, KICKOFFS, EFFORTS, PROFILES, DECISIONS, isAgent, dim, isDir, sanitizeCfg };

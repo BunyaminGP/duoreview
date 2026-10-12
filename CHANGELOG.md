@@ -6,3 +6,8 @@
 - English and Turkish UI, prompts and tool texts.
 - Executable lookup via `PATH` plus `DUOREVIEW_CLAUDE_BIN` / `DUOREVIEW_CODEX_BIN` overrides.
 - Renderer input validation, sandboxed window.
+- Joint kickoff (default): both agents analyse the brief independently, notes stay hidden until both are in, then a discussion; the plan needs the partner's agreement. New tools `post_note`, `discuss`, `open_thread`, `read_thread`, `drop_task`.
+- Notes and discussion tab with a side-by-side reader and Markdown export.
+- Rules, role and brief are delivered with the first `next_action` reply instead of being typed into the terminal; style rules against filler in code and prose.
+- Enter is sent after the terminal echo settles and retried if the agent did not start; Codex startup menus (update, folder trust) count as approval prompts; a bare "approve" on screen no longer does.
+- Model menus list all models (Codex from `~/.codex/models_cache.json`) with per-model effort levels.

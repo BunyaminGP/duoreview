@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld("bridge", {
   setProject: (dir) => ipcRenderer.invoke("project:set", dir),
   resolveTask: (id, decision, note) => ipcRenderer.invoke("task:resolve", { id, decision, note }),
   listModels: () => ipcRenderer.invoke("models:list"),
+  talk: () => ipcRenderer.invoke("talk:get"),
+  exportTalk: () => ipcRenderer.invoke("talk:export"),
   setLang: (code) => ipcRenderer.invoke("lang:set", code),
   resetBoard: () => ipcRenderer.invoke("board:reset"),
   saveCfg: (cfg) => ipcRenderer.send("cfg:save", cfg),

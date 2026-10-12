@@ -8,7 +8,14 @@ const { t } = require("./i18n");
 const AGENTS = ["claude", "codex"];
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g;
 // Ekranın sonunda bir onay/güven sorusu varsa Enter'a basmak onu kullanıcı adına onaylamak olur.
-const APPROVAL = /(\(y\/n\)|\[y\/n\]|do you want to|do you trust|would you like to|allow (this|once|codex|claude)|press enter to (confirm|continue)|1\.\s*yes|yes, and|trust the files|approve)/i;
+// Çıplak "approve" aranmaz: ajanın kendi review_task(verdict: "approve") çağrısı ekranda görünür ve ajan boşta sanılmazdı.
+// Codex açılış menüleri de (güncelleme, klasöre güven) böyledir. İmleç hareketleri silindiği için boşluklar kaybolabilir: \s* kullan.
+const APPROVAL = new RegExp([
+  "\\(y\\/n\\)|\\[y\\/n\\]|do you want to|do you trust|would you like to|allow (this|once|codex|claude)",
+  "press enter to (confirm|continue)|1\\.\\s*yes|yes, and|trust the files|approve\\?|approval (required|needed)",
+  "update\\s*now|trust\\s*this\\s*folder|trust\\s*and\\s*continue|enter\\s*continue",
+  "[›❯]\\s*1\\.\\s*\\S", // seçim imleci numaralı bir seçenekte duruyor
+].join("|"), "i");
 const COOLDOWN_MS = 90_000;
 const MAX_SAME_NUDGES = 3;
 
@@ -31,6 +38,7 @@ async function createReferee({ distDir, getDb, write, blocked = () => null, now 
     },
     // Kullanıcı terminale bir şey yazdıysa (ör. onay sorusunu cevapladıysa) eski ekran metni geçersizdir.
     noteInput(agent) { st[agent].tail = ""; },
+    awaitingApproval(agent) { return APPROVAL.test(st[agent].tail); },
     statuses() {
       return Object.fromEntries(AGENTS.map((a) => [a, { status: st[a].status, flow: st[a].flow, why: st[a].why }]));
     },

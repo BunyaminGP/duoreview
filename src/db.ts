@@ -5,6 +5,9 @@ import { join } from "node:path";
 export type Agent = "claude" | "codex";
 export const AGENTS: Agent[] = ["claude", "codex"];
 export const MAX_REVIEW_ROUNDS = 3;
+/** Bir tartışmada en çok kaç mesaj yazılır; dolunca uzlaşma yoksa "ayrışma" olarak kapanır. */
+export const MAX_POSTS = { kickoff: 4, plan: 4, free: 6 } as const;
+export const MAX_OPEN_THREADS = 2;
 
 export const other = (a: Agent): Agent => (a === "claude" ? "codex" : "claude");
 
@@ -44,6 +47,34 @@ export function openDb(dataDir: string) {
       kind TEXT NOT NULL DEFAULT 'note',   -- note | prompt (prompt: ortağın terminaline yazılır)
       text TEXT NOT NULL,
       read INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      author TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'note',   -- kickoff (ikisi de yazana dek ortaktan gizli) | note
+      title TEXT NOT NULL DEFAULT '',
+      text TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS threads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL DEFAULT 'free',   -- kickoff | plan | free
+      topic TEXT NOT NULL,
+      task_id INTEGER,
+      blocking INTEGER NOT NULL DEFAULT 0, -- açıkken yeni işe başlanmaz
+      status TEXT NOT NULL DEFAULT 'OPEN', -- OPEN | CLOSED
+      outcome TEXT,                        -- agreed | split
+      opened_by TEXT NOT NULL,
+      max_posts INTEGER NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS posts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      thread_id INTEGER NOT NULL,
+      author TEXT NOT NULL,
+      stance TEXT NOT NULL,                -- propose | object | agree
+      text TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);

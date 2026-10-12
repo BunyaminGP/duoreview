@@ -3,11 +3,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { readFileSync } from "node:fs";
-import { openDb, other, AGENTS, MAX_REVIEW_ROUNDS, type Agent } from "./db.js";
+import { openDb, other, AGENTS, MAX_REVIEW_ROUNDS, MAX_OPEN_THREADS, type Agent } from "./db.js";
 import { t as tr } from "./i18n.js";
 import {
   all, one, run, tx, logEvent, captainOf, reviewMode, reviewPhaseOpen, quota,
-  claimable, nextAction, compact, type Task,
+  claimable, nextAction, compact, briefing, kickoffOf, planned, total, setMeta, kickoffNote, postsOf, myTurn,
+  openThread, addPost, type Task, type Thread,
 } from "./flow.js";
 
 const me = process.env.AGENT_ID as Agent | undefined;
@@ -21,7 +22,8 @@ if (!process.env.DUOREVIEW_DIR) {
 }
 const db = openDb(process.env.DUOREVIEW_DIR);
 const partner = other(me);
-const delivered = new Set<number>(); // bu oturumda tarifi gönderilen görevler (süreç = ajan oturumu)
+const delivered = new Set<number | string>(); // bu oturumda gönderilen görev tarifleri, notlar, mesajlar (süreç = ajan oturumu)
+let briefed = false; // kurallar oturumun ilk next_action cevabıyla bir kez gider
 
 // Cevaplar tek satır JSON: girinti ve boş alan token harcar.
 const reply = (data: unknown) => ({
@@ -38,7 +40,12 @@ const version = (() => {
 const server = new McpServer({ name: "duoreview", version });
 
 server.tool("next_action", tr("dNextAction"), {},
-  async () => reply(compact(db, nextAction(db, me), delivered)));
+  async () => {
+    const a = compact(db, nextAction(db, me), delivered, me);
+    if (briefed) return reply(a);
+    briefed = true;
+    return reply({ ...a, rules: briefing(db, me) });
+  });
 
 server.tool(
   "post_tasks",
@@ -49,18 +56,37 @@ server.tool(
       description: z.string().default(""),
       touches: z.array(z.string()).default([]),
       assignee: z.enum(["claude", "codex"]).optional(),
-    })).min(1),
+    })),
   },
   async ({ tasks }) => {
     if (captainOf(db) !== me) return fail(tr("onlyCaptain", { captain: captainOf(db) }));
-    tx(db, () => tasks.forEach((t) =>
-      run(db, "INSERT INTO tasks(title, description, touches, assignee) VALUES (?,?,?,?)",
-        t.title, t.description, JSON.stringify(t.touches), t.assignee ?? null)));
-    log(tr("evTasksAdded", { n: tasks.length }));
-    const per = Object.fromEntries(AGENTS.map((a) => [a, all<Task>(db, "SELECT id FROM tasks WHERE assignee=?", a).length]));
-    return reply({ added: tasks.length, per, quota: quota(db) });
+    const joint = kickoffOf(db) === "joint";
+    const first = total(db) === 0 && !planned(db);
+    if (joint && first && nextAction(db, me).action !== "PLAN") return fail(tr("kickoffFirst"));
+    const per = tx(db, () => {
+      const ids = tasks.map((t) => Number(run(db, "INSERT INTO tasks(title, description, touches, assignee) VALUES (?,?,?,?)",
+        t.title, t.description, JSON.stringify(t.touches), t.assignee ?? null).lastInsertRowid));
+      setMeta(db, "planned", "1");
+      const per = Object.fromEntries(AGENTS.map((a) => [a, all<Task>(db, "SELECT id FROM tasks WHERE assignee=?", a).length]));
+      // Ortak kipte ilk plan ortağın onayından geçer: iş bölümü tek kişinin kararı olmasın.
+      if (joint && first && tasks.length) {
+        const lines = tasks.map((t, i) => `#${ids[i]} ${t.title} → ${t.assignee ?? "?"}${t.touches.length ? ` [${t.touches.join(", ")}]` : ""}`);
+        openThread(db, { kind: "plan", topic: tr("topicPlan"), by: me, blocking: true, text: lines.join("\n") });
+      }
+      return per;
+    });
+    log(tasks.length ? tr("evTasksAdded", { n: tasks.length }) : tr("evNoTasks"));
+    const uneven = Math.abs(per.claude - per.codex) > 1;
+    return reply({ added: tasks.length, per, quota: quota(db), warn: uneven ? tr("unbalanced", { split: `claude ${per.claude}, codex ${per.codex}` }) : undefined });
   },
 );
+
+server.tool("drop_task", tr("dDropTask"), { id: z.number() }, async ({ id }) => {
+  if (captainOf(db) !== me) return fail(tr("onlyCaptainShort"));
+  if (!run(db, "DELETE FROM tasks WHERE id=? AND status='TODO'", id).changes) return fail(tr("notTodoOrMissing"));
+  log(tr("evDropped", { id }));
+  return reply("ok");
+});
 
 server.tool("assign_task", tr("dAssignTask"),
   { id: z.number(), assignee: z.enum(["claude", "codex"]) },
@@ -164,6 +190,57 @@ server.tool("read_inbox", tr("dReadInbox"), {}, async () => {
     "SELECT sender,text FROM messages WHERE recipient=? AND read=0 ORDER BY id", me);
   if (msgs.length) run(db, "UPDATE messages SET read=1 WHERE recipient=?", me);
   return reply(msgs);
+});
+
+server.tool("post_note", tr("dPostNote"),
+  { text: z.string().min(1).max(12000), title: z.string().max(120).default("") },
+  async ({ text, title }) => tx(db, () => {
+    const kickoff = kickoffOf(db) === "joint" && total(db) === 0 && !planned(db) && !kickoffNote(db, me);
+    run(db, "INSERT INTO notes(author, kind, title, text) VALUES (?,?,?,?)", me, kickoff ? "kickoff" : "note", title, text);
+    log(kickoff ? tr("evKickoffNote") : tr("evNote", { title: title || text.slice(0, 60) }));
+    if (kickoff && kickoffNote(db, partner)) {
+      const id = openThread(db, { kind: "kickoff", topic: tr("topicKickoff"), by: captainOf(db), blocking: true });
+      logEvent(db, "app", tr("evKickoffOpen", { id }));
+    }
+    return reply("ok");
+  }),
+);
+
+server.tool("discuss", tr("dDiscuss"),
+  { thread: z.number(), stance: z.enum(["agree", "object", "propose"]), text: z.string().min(1).max(6000) },
+  async ({ thread, stance, text }) => tx(db, () => {
+    const th = one<Thread>(db, "SELECT * FROM threads WHERE id=? AND status='OPEN'", thread);
+    if (!th) return fail(tr("noThread"));
+    if (!myTurn(db, th, me)) return fail(tr("notYourTurn"));
+    const r = addPost(db, th, me, stance, text);
+    log(tr("evPost", { id: th.id, stance }));
+    if (r.outcome) logEvent(db, "app", tr(r.outcome === "agreed" ? "evThreadAgreed" : "evThreadSplit", { id: th.id }));
+    return reply(r.outcome ? `CLOSED:${r.outcome}` : { left: r.left });
+  }),
+);
+
+server.tool("open_thread", tr("dOpenThread"),
+  { topic: z.string().min(1).max(160), text: z.string().min(1).max(6000), task: z.number().optional() },
+  async ({ topic, text, task }) => tx(db, () => {
+    const mine = all<Thread>(db, "SELECT id FROM threads WHERE status='OPEN' AND kind='free' AND opened_by=?", me).length;
+    if (mine >= MAX_OPEN_THREADS) return fail(tr("tooManyThreads", { n: mine }));
+    const id = openThread(db, { kind: "free", topic, by: me, taskId: task, text });
+    log(tr("evThreadOpened", { id, topic }));
+    return reply({ thread: id });
+  }),
+);
+
+server.tool("read_thread", tr("dReadThread"), { id: z.number().optional() }, async ({ id }) => {
+  if (id === undefined) {
+    return reply(all<Thread>(db, "SELECT * FROM threads ORDER BY id")
+      .map((th) => `${th.id}|${th.kind}|${th.outcome ?? th.status}|${th.topic}`).join("\n"));
+  }
+  const th = one<Thread>(db, "SELECT * FROM threads WHERE id=?", id);
+  if (!th) return fail(tr("noThread"));
+  const notes = th.kind === "kickoff"
+    ? all<{ author: string; text: string }>(db, "SELECT author,text FROM notes WHERE kind='kickoff' ORDER BY id") : undefined;
+  return reply({ topic: th.topic, status: th.outcome ?? th.status, notes,
+    posts: postsOf(db, th.id).map((p) => ({ by: p.author, stance: p.stance, text: p.text })) });
 });
 
 await server.connect(new StdioServerTransport());

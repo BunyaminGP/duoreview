@@ -90,3 +90,43 @@ main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 340px; }
 .bar .usage { order: 5; flex-basis: 100%; margin-left: 18px; }
 .models .note { white-space: nowrap; }
 .meter .fill { display: block; }
+
+/* model seçimi */
+.models select.model { min-width: 230px; max-width: 320px; }
+.models input[hidden] { display: none; }
+
+/* yan panel sekmeleri, not ve tartışma listesi */
+.tabs { display: flex; background: var(--panel); border-bottom: 1px solid var(--line); }
+.tabs button { flex: 1; padding: 7px 8px; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  background: none; color: var(--muted); }
+.tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+.tabs small { color: var(--warn); }
+.view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.view[hidden], .talk-list[hidden] { display: none; }
+.talk-list { flex: 1; overflow-y: auto; }
+.talk-list li { padding: 7px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.talk-list li:hover { background: var(--panel); }
+.talk-list li.empty, .talk-list li.head { cursor: default; background: none; }
+.talk-list li.head { padding: 8px 12px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); border: 0; }
+.talk-list .meta { display: flex; gap: 6px; margin-top: 2px; font-size: 11px; color: var(--muted); }
+.who-claude { color: var(--orange); } .who-codex { color: var(--accent); } .who-user, .who-app { color: var(--muted); }
+.o-OPEN { color: var(--warn); } .o-agreed { color: var(--ok); } .o-split { color: var(--bad); } .o-CLOSED { color: var(--muted); }
+
+/* okuma görünümü: iki terminalin üstünü kaplar, yan panel açık kalır */
+main { position: relative; }
+.reader { position: absolute; inset: 0 341px 0 0; z-index: 5; display: flex; flex-direction: column; background: var(--bg); }
+.reader[hidden] { display: none; }
+.reader-body { flex: 1; overflow-y: auto; padding: 4px 20px 32px; font-size: 14px; line-height: 1.55; }
+.reader-body h3 { margin: 22px 0 8px; font-size: 14px; display: flex; align-items: baseline; gap: 8px; }
+.reader-body h3 .chip { font-weight: 400; font-size: 11px; }
+.reader-body .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.reader-body .doc { min-width: 0; }
+.reader-body .text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 78ch; }
+.reader-body .post { margin: 0 0 12px; padding-left: 12px; border-left: 2px solid var(--line); }
+.reader-body .post.claude { border-left-color: var(--orange); } .reader-body .post.codex { border-left-color: var(--accent); }
+.reader-body .by { margin-bottom: 2px; font-size: 12px; color: var(--muted); }
+.reader-body .by b { font-weight: 600; }
+.reader-body .hint { color: var(--bad); font-size: 12px; margin: 0 0 10px; }
+.reader-body .empty { padding: 20px 0; }
+
+:root { color-scheme: dark; }

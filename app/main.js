@@ -9,6 +9,9 @@ const { protocol } = require("./protocol");
 const { describeSpawnError } = require("./errtext");
 const { createReferee, AGENTS } = require("./referee");
 const usageLib = require("./usage");
+const { createInjector } = require("./inject");
+const { CLAUDE_MODELS, codexModels } = require("./models");
+const { talkMarkdown } = require("./talkmd");
 const I18N = require("./i18n");
 const V = require("./validate");
 const { t } = I18N;
@@ -17,6 +20,7 @@ const distDir = path.join(__dirname, "..", "dist").replace("app.asar", "app.asar
 const DEFAULT_CFG = {
   captain: "claude",
   reviewMode: "after_all",
+  kickoff: "joint",
   profile: "dengeli",
   models: { claude: "sonnet", codex: "" },     // "" = ajanın kendi varsayılanı
   efforts: { claude: "medium", codex: "medium" },
@@ -25,6 +29,7 @@ const FAKE = !!process.env.DUOREVIEW_FAKE; // gerçek ajan yerine cmd.exe (hakem
 
 const terms = {}; // agent -> pty
 const pendingInitial = {}; // agent -> henüz teslim edilmemiş protokol metni
+const lastData = {}; // agent -> terminalden gelen son çıktının zamanı
 let win, projectDir, db, dbmod, flow, srvI18n, referee;
 
 // ---- dil -------------------------------------------------------------------
@@ -110,7 +115,7 @@ function startAgent(agent, cols = 100, rows = 30) {
   referee.start(agent);
   // Takım başlatılırken bu ajan açılamadıysa, sonradan "Başlat" ile açıldığında protokol yine gider.
   if (pendingInitial[agent]) { referee.queueInitial(agent, pendingInitial[agent]); delete pendingInitial[agent]; }
-  term.onData((data) => { referee.noteOutput(agent, data); send("pty:data", { agent, data }); });
+  term.onData((data) => { lastData[agent] = Date.now(); referee.noteOutput(agent, data); send("pty:data", { agent, data }); });
   term.onExit(({ exitCode }) => {
     delete terms[agent];
     referee.stop(agent);
@@ -120,20 +125,21 @@ function startAgent(agent, cols = 100, rows = 30) {
   send("state", stateSnapshot());
 }
 
-// TUI'ler yapıştırmayı farklı işlediği için metin ve Enter ayrı gönderilir.
-function inject(agent, text) {
-  const term = terms[agent];
-  if (!term) return;
-  term.write(text);
-  setTimeout(() => terms[agent]?.write("\r"), 400);
-}
+const inject = createInjector({
+  write: (agent, data) => { if (!terms[agent]) return false; terms[agent].write(data); return true; },
+  lastOutputAt: (agent) => lastData[agent] ?? 0,
+  awaitingApproval: (agent) => referee.awaitingApproval(agent),
+});
 
 // ---- pano ----------------------------------------------------------------
 function board() {
   const tasks = db.prepare("SELECT id,title,status,assignee,owner,rounds FROM tasks ORDER BY id").all();
   const events = db.prepare("SELECT id,actor,text,created_at FROM events ORDER BY id DESC LIMIT 80").all().reverse();
   const meta = Object.fromEntries(db.prepare("SELECT key,value FROM meta").all().map((r) => [r.key, r.value]));
-  return { tasks, events, meta, agents: referee.statuses(), usage };
+  const threads = db.prepare(
+    "SELECT t.id, t.kind, t.topic, t.status, t.outcome, (SELECT COUNT(*) FROM posts p WHERE p.thread_id=t.id) posts FROM threads t ORDER BY t.id").all();
+  const notes = db.prepare("SELECT id, author, kind, title, length(text) size FROM notes ORDER BY id").all();
+  return { tasks, events, meta, threads, notes, agents: referee.statuses(), usage };
 }
 
 // ---- kalan kullanım --------------------------------------------------------
@@ -187,7 +193,7 @@ ipcMain.handle("project:set", (_e, dir) => {
 });
 ipcMain.handle("board:reset", () => {
   if (running().length) return false;
-  for (const t of ["tasks", "reviews", "messages", "events", "meta"]) db.exec(`DELETE FROM ${t}`);
+  for (const t of ["tasks", "reviews", "messages", "events", "meta", "notes", "threads", "posts"]) db.exec(`DELETE FROM ${t}`);
   db.exec("DELETE FROM sqlite_sequence");
   send("board", board());
   return true;
@@ -205,9 +211,20 @@ ipcMain.handle("lang:set", (_e, code) => {
   send("board", board());
 });
 ipcMain.handle("models:list", () => ({
-  claude: ["sonnet", "opus", "haiku", "fable", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001"],
-  codex: usageLib.listCodexModels(),
+  claude: { models: CLAUDE_MODELS, current: "" },
+  codex: codexModels(undefined, usageLib.listCodexModels()),
 }));
+ipcMain.handle("talk:get", () => flow.discussion(db));
+const talkLabels = () => Object.fromEntries(
+  ["kickoff", "note", "OPEN", "CLOSED", "agreed", "split", "propose", "object", "agree"].map((k) => [k, t("k_" + k)]));
+ipcMain.handle("talk:export", async () => {
+  const r = await dialog.showSaveDialog(win, {
+    defaultPath: path.join(projectDir, "duoreview-notes.md"), filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+  if (r.canceled || !r.filePath) return false;
+  fs.writeFileSync(r.filePath, talkMarkdown(flow.discussion(db), { title: t("exportTitle"), labels: talkLabels() }));
+  return true;
+});
 ipcMain.on("cfg:save", (_e, cfg) => patchSettings((s) => { s.byProject = { ...s.byProject, [projectDir]: V.sanitizeCfg(cfg) }; }));
 ipcMain.on("pty:start", (_e, { agent, cols, rows } = {}) => { if (V.isAgent(agent)) startAgent(agent, V.dim(cols, 100), V.dim(rows, 30)); });
 ipcMain.on("pty:write", (_e, { agent, data } = {}) => {
@@ -227,11 +244,19 @@ ipcMain.on("team:start", (_e, payload = {}) => {
   patchSettings((s) => { s.byProject = { ...s.byProject, [projectDir]: cfg }; });
   flow.setMeta(db, "captain", cfg.captain);
   flow.setMeta(db, "review_mode", cfg.reviewMode);
-  flow.logEvent(db, "app", t("evTeamStarted", { captain: cfg.captain, mode: t(cfg.reviewMode === "immediate" ? "evModeImmediate" : "evModeAfterAll") }));
+  flow.setMeta(db, "kickoff", cfg.kickoff);
+  // Görev çıkmamış bir turdan (yalnız inceleme) sonra yeni talimat gelirse açılış baştan yapılır; eski notlar kalır.
+  if (flow.total(db) === 0 && flow.getMeta(db, "brief", cfg.brief) !== cfg.brief) {
+    db.exec("UPDATE notes SET kind='note' WHERE kind='kickoff'");
+    db.exec("UPDATE threads SET status='CLOSED', outcome=COALESCE(outcome,'split') WHERE status='OPEN'");
+    flow.setMeta(db, "planned", "0");
+  }
+  flow.setMeta(db, "brief", cfg.brief);
+  flow.logEvent(db, "app", t("evTeamStarted", { captain: cfg.captain, mode: t(cfg.reviewMode === "immediate" ? "evModeImmediate" : "evModeAfterAll"), kickoff: t(cfg.kickoff === "joint" ? "kickoffJoint" : "kickoffSolo") }));
   const resume = db.prepare("SELECT COUNT(*) n FROM tasks").get().n > 0;
   if (resume) flow.logEvent(db, "app", t("evResume"));
   for (const a of AGENTS) {
-    pendingInitial[a] = protocol(a, { ...cfg, projectDir, resume });
+    pendingInitial[a] = protocol(a);
     startAgent(a, V.dim(sizes[a]?.cols, 100), V.dim(sizes[a]?.rows, 30));
   }
 });
