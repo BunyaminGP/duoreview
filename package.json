@@ -10,7 +10,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "app": "npm run build && electron .",
-    "test": "npm run build && node test/e2e.mjs && node test/referee.test.mjs && node test/usage.test.mjs && node test/i18n.test.mjs && node test/agents.test.mjs && node test/validate.test.mjs && node test/electron-node.mjs",
+    "test": "npm run build && node test/e2e.mjs && node test/joint.test.mjs && node test/referee.test.mjs && node test/usage.test.mjs && node test/i18n.test.mjs && node test/agents.test.mjs && node test/validate.test.mjs && node test/inject.test.mjs && node test/models.test.mjs && node test/electron-node.mjs",
     "tokens": "npm run build && node test/tokens.mjs"
   },
   "dependencies": {

@@ -123,3 +123,38 @@ db.close(); rmSync(dir, { recursive: true, force: true });
   console.log("KOTA KORUMASI OK");
   db2.close(); rmSync(dir2, { recursive: true, force: true });
 }
+
+// --- Codex açılış menüleri onay sorusudur: Enter "Update now" ya da "Trust and continue" seçerdi ---
+{
+  const dir3 = mkdtempSync(join(tmpdir(), "ref3-"));
+  const db3 = openDb(dir3);
+  setMeta(db3, "captain", "claude");
+  const out = []; let t3 = 9_000_000;
+  const ref3 = await createReferee({ distDir: resolve("dist"), getDb: () => db3, now: () => t3, write: (a, x) => out.push([a, x]) });
+  // Gerçek Codex 0.162 ekranlarından (ANSI silinince boşlukların bir kısmı kaybolur)
+  const screens = [
+    "Updat available · 0.162.0 → 0.162.1Release notes: https://github.com/openai/codex/releases/latest› 1. Update now (runs `npm install -g @openai/codex`) 2.Skip3.Skipuntilnextversionenter continue · esc skip",
+    "Folder accessC:\\proje Trustthisfolder?Codexcanread,edit,andrunfileshere. › 1. Trust and continue 2.Quitenter continue · esc quit",
+    "❯ 1. Yes  2. No, and tell Claude what to do differently",
+  ];
+  for (const screen of screens) {
+    ref3.start("codex"); ref3.queueInitial("codex", "protokol");
+    ref3.noteOutput("codex", screen);
+    t3 += 10_000; ref3.tick();
+    assert.equal(ref3.statuses().codex.status, "approval", screen.slice(0, 30));
+    assert.equal(ref3.awaitingApproval("codex"), true);
+  }
+  assert.deepEqual(out, [], "menü açıkken terminale yazılmamalı");
+  // Kullanıcı menüyü geçince protokol gider
+  ref3.noteInput("codex"); ref3.noteOutput("codex", "›Ask Codex to do anything ? for shortcuts");
+  t3 += 10_000; ref3.tick();
+  assert.deepEqual(out, [["codex", "protokol"]]);
+  // Ajanın kendi araç çağrısındaki "approve" kelimesi onay sorusu değildir
+  out.length = 0;
+  ref3.noteOutput("codex", '• Called duoreview.review_task({"id":3,"verdict":"approve_with_notes","comment":"ok"})');
+  t3 += 10_000; ref3.tick();
+  assert.equal(ref3.awaitingApproval("codex"), false);
+  assert.notEqual(ref3.statuses().codex.status, "approval");
+  console.log("AÇILIŞ MENÜLERİ OK");
+  db3.close(); rmSync(dir3, { recursive: true, force: true });
+}

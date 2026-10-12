@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { openDb } from "../dist/db.js";
-import { setMeta, run } from "../dist/flow.js";
+import { setMeta, run, briefing } from "../dist/flow.js";
 
 const require = createRequire(import.meta.url);
 const { protocol } = require("../app/protocol.js");
@@ -46,11 +46,11 @@ const tools = (await claude.listTools()).tools;
 const schemaChars = JSON.stringify(tools).length;
 
 // 2) Protokol mesajları
-const cfg = { captain: "claude", brief: "docs klasöründeki belgeleri oku; yapılacak işleri çıkar ve panoya yaz.", reviewMode: "after_all", projectDir: "C:\\path\\to\\project" };
+setMeta(db, "brief", "docs klasöründeki belgeleri oku; yapılacak işleri çıkar ve panoya yaz.");
 const proto = {
-  "protokol: kaptan": protocol("claude", cfg).length,
-  "protokol: işçi": protocol("codex", cfg).length,
-  "protokol: devam": protocol("claude", { ...cfg, resume: true }).length,
+  "terminale yazılan satır": protocol("claude").length,
+  "kurallar: ortak açılış": (setMeta(db, "kickoff", "joint"), briefing(db, "claude").length),
+  "kurallar: yalnız kaptan": (setMeta(db, "kickoff", "solo"), briefing(db, "claude").length),
 };
 
 // 3) Tipik cevaplar (her sorgu turunda)

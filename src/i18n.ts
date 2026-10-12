@@ -10,7 +10,7 @@ export const getLang = () => lang;
 export const MESSAGES = {
   tr: {
     // akış (flow.ts)
-    planHint: "Kaynak belgeleri oku, işleri post_tasks ile panoya yaz (her görevde touches ve assignee ver), sonra next_action çağır.",
+    planHint: "İşleri post_tasks ile panoya yaz (her görevde touches ve assignee ver), sonra next_action çağır.",
     captainPlanning: "Kaptan ({captain}) planı hazırlıyor.",
     reworkHint: "Yorumları uygula, sonra submit_task çağır.",
     finishHint: "İşi bitir ve submit_task çağır.",
@@ -45,7 +45,9 @@ export const MESSAGES = {
     dReviewTask:
       "Ortağın görevini incele. request_changes YALNIZ severity=blocker (çökme, derleme kırığı, normal kullanımda veri kaybı) " +
       "ya da major (tarife aykırılık) için. Nadir/varsayımsal durum (disk dolu, depolama hatası), stil, ek iyileştirme: approve_with_notes. " +
-      "Önceki bulgular kapandıysa onayla; yeni köşe durumu arayıp turu uzatma.",
+      "Önceki bulgular kapandıysa onayla; yeni köşe durumu arayıp turu uzatma. " +
+      "Aynı işi belirgin biçimde daha sade ya da hızlı yapmanın yolunu görüyorsan comment'e somut olarak yaz (hangi dosya, nasıl). " +
+      "İstenmemiş dosya/soyutlama ve ilgisiz değişiklik major sayılır.",
     dSendPrompt: "Ortağın terminaline prompt yaz (boşa çıkınca teslim edilir). Kısa ve kendi kendine yeten olsun.",
     dReadInbox: "Okunmamış mesajlar.",
     onlyCaptain: "Yetki kaptanda ({captain}).",
@@ -71,9 +73,57 @@ export const MESSAGES = {
     evPrompt: "{partner} ajanına prompt gönderdi: {text}",
     colHeader: "id|durum|kim|tur|başlık",
     lastLabel: "son",
+    partnerAnalyzing: "{partner} kendi incelemesini yazıyor.",
+    partnerReplying: "Tartışmada söz {partner} ajanında.",
+    roleCaptain: "Rolün: KAPTAN ve işçi.",
+    roleWorker: "Rolün: işçi; kaptan {captain}.",
+    briefLine: "Kullanıcının talimatı: {brief}",
+    loop:
+      "Döngü: her adımdan sonra next_action çağır, dönen action'ı uygula. CLAIM→claim_task | FINISH_WORK→işi yap, submit_task | " +
+      "REVIEW→git diff/grep ile değişen kısımları oku, mümkünse çalıştır, review_task | REWORK→bulguları düzelt, submit_task | " +
+      "DISCUSS→gelen not ve mesajları oku, discuss ile yanıtla | WAIT→dur, uygulama seni uyandırır, yoklama yapma | " +
+      "ALL_DONE→status(detail) ile kullanıcıya kısa özet ver. Ortağın görevindeki dosyalara dokunma. " +
+      "Tasarım kararı belirsizse koda başlamadan open_thread ile ortağına sor. " +
+      "Projenin kurallarına uy; commit, push, merge yapma, anahtar dosyalarına dokunma.",
+    loopJoint:
+      "Ortak açılış: ANALYZE→talimatı kendi başına yerine getir (kodu oku, talimat istiyorsa internette araştır); ortağını bekleme, " +
+      "bulgularını post_note ile yaz. Notlar ikiniz de yazana kadar birbirinizden gizlidir, sonra DISCUSS ile farkları tartışırsınız. " +
+      "PLAN (kaptan)→iki notu ve tartışmayı birleştir, post_tasks ile işleri iki ajana dengeli böl; iş çıkmıyorsa post_tasks(tasks:[]). " +
+      "Plan da ortağın onayından geçer.",
+    loopSolo: "PLAN (kaptan)→talimatı incele, post_tasks ile işleri iki ajana dengeli böl.",
+    reviewNow: "İnceleme anında.",
+    reviewLater: "İnceleme tüm işler bitince.",
+    style:
+      "Üslup (kod, not, özet, mesaj, arayüz metni): " +
+      "Kodda çevredeki kodun adlandırmasına ve yorum yoğunluğuna uy; kodu tekrar eden yorum, istenmemiş soyutlama/ayar/yedek yol, " +
+      "olamayacak hataya try-catch, istenmemiş dosya (özet, README), dokunmadığın kodu yeniden biçimleme yok; en küçük diff. " +
+      "Metinde ilk cümlede sonucu söyle; giriş cümlesi, kapanış özeti, övgü, emoji, serpiştirilmiş kalın yazı, üçlü sıralama kalıbı, " +
+      "'kapsamlı/sağlam/sorunsuz' türü sıfatlar yok; iddiayı dosya:satır, sayı ya da komut çıktısıyla destekle; bilmiyorsan öyle yaz. " +
+      "Tartışmada katılmıyorsan söyle ve nedenini göster, nezaketen onaylama; ortağının yazdığını tekrar etme, eksik ya da yanlış bulduğunu yaz.",
+    dPostNote: "Analiz/bulgu notu yaz (kullanıcı uygulamada okur). ANALYZE adımında açılış notun budur.",
+    dDiscuss: "Tartışmaya yanıt yaz. stance: agree (katılıyorum, tartışma kapanır) | object (katılmıyorum, gerekçesiyle) | propose (yeni öneri).",
+    dOpenThread: "Ortağınla tartışma aç: yaklaşım, tasarım kararı, itiraz. task=ilgili görev no.",
+    dReadThread: "id yoksa tartışma listesi; id ile notlar ve tüm mesajlar.",
+    dDropTask: "[Kaptan] TODO görevi sil.",
+    kickoffFirst: "Önce ortak inceleme ve tartışma bitmeli (next_action çağır).",
+    noThread: "Tartışma yok ya da kapanmış.",
+    notYourTurn: "Söz sırası ortağında.",
+    tooManyThreads: "Açık {n} tartışman var; önce onlar kapansın.",
+    unbalanced: "Yük dengesiz ({split}). Gerekçen yoksa assign_task ile dengele.",
+    topicKickoff: "Açılış: iki incelemenin karşılaştırması",
+    topicPlan: "Plan ve iş bölümü",
+    evNote: "not yazdı: {title}",
+    evKickoffNote: "açılış incelemesini yazdı",
+    evKickoffOpen: "iki inceleme de hazır → tartışma #{id} açıldı",
+    evPost: "tartışma #{id}: {stance}",
+    evThreadAgreed: "tartışma #{id} uzlaşmayla kapandı",
+    evThreadSplit: "tartışma #{id} ayrışmayla kapandı (mesaj sınırı)",
+    evThreadOpened: "tartışma #{id} açtı: {topic}",
+    evNoTasks: "plan: görev çıkmadı (yalnız inceleme)",
+    evDropped: "#{id} görevini sildi",
   },
   en: {
-    planHint: "Read the source documents, post the work to the board with post_tasks (give each task touches and assignee), then call next_action.",
+    planHint: "Post the work to the board with post_tasks (give each task touches and assignee), then call next_action.",
     captainPlanning: "The captain ({captain}) is preparing the plan.",
     reworkHint: "Apply the review comments, then call submit_task.",
     finishHint: "Finish the work and call submit_task.",
@@ -107,7 +157,9 @@ export const MESSAGES = {
     dReviewTask:
       "Review your partner's task. request_changes ONLY for severity=blocker (crash, broken build, data loss in normal use) " +
       "or major (violates the spec). Rare/hypothetical cases (disk full, storage errors), style, extra polish: approve_with_notes. " +
-      "If earlier findings are resolved, approve; do not hunt for new corner cases to prolong the loop.",
+      "If earlier findings are resolved, approve; do not hunt for new corner cases to prolong the loop. " +
+      "If you see a clearly simpler or faster way to do the same job, put it in comment concretely (which file, how). " +
+      "Unrequested files/abstractions and unrelated changes count as major.",
     dSendPrompt: "Write a prompt into your partner's terminal (delivered when it goes idle). Keep it short and self-contained.",
     dReadInbox: "Unread messages.",
     onlyCaptain: "Only the captain ({captain}) may do this.",
@@ -133,6 +185,54 @@ export const MESSAGES = {
     evPrompt: "sent a prompt to {partner}: {text}",
     colHeader: "id|status|who|round|title",
     lastLabel: "last",
+    partnerAnalyzing: "{partner} is writing its own analysis.",
+    partnerReplying: "It is {partner}'s turn in the discussion.",
+    roleCaptain: "Your role: CAPTAIN and worker.",
+    roleWorker: "Your role: worker; the captain is {captain}.",
+    briefLine: "The user's instruction: {brief}",
+    loop:
+      "Loop: call next_action after every step and carry out the returned action. CLAIM→claim_task | FINISH_WORK→do the work, submit_task | " +
+      "REVIEW→read the changed parts with git diff/grep, run them if you can, review_task | REWORK→fix the findings, submit_task | " +
+      "DISCUSS→read the incoming note and messages, answer with discuss | WAIT→stop, the app wakes you, do not poll | " +
+      "ALL_DONE→give the user a short summary via status(detail). Do not touch files of your partner's task. " +
+      "If a design decision is unclear, ask your partner with open_thread before writing code. " +
+      "Follow the project's rules; do not commit, push, merge, or touch key files.",
+    loopJoint:
+      "Joint kickoff: ANALYZE→carry out the instruction on your own (read the code, research the web if the instruction asks for it); do not wait for your partner, " +
+      "write your findings with post_note. Notes stay hidden from each other until both are in, then you argue the differences in DISCUSS. " +
+      "PLAN (captain)→merge both notes and the discussion, split the work evenly between the two agents with post_tasks; if there is no work, post_tasks(tasks:[]). " +
+      "The plan also goes past your partner.",
+    loopSolo: "PLAN (captain)→study the instruction, split the work evenly between the two agents with post_tasks.",
+    reviewNow: "Review immediately.",
+    reviewLater: "Review once all work is done.",
+    style:
+      "Style (code, notes, summaries, messages, UI copy): " +
+      "In code match the naming and comment density around you; no comments that restate the code, no unrequested abstraction/option/fallback, " +
+      "no try-catch for errors that cannot happen, no unrequested files (summaries, READMEs), no reformatting of code you did not change; smallest diff. " +
+      "In text put the result in the first sentence; no opener, no closing recap, no praise, no emoji, no scattered bold, no rule-of-three lists, " +
+      "no adjectives like 'comprehensive/robust/seamless'; back a claim with file:line, a number or command output; if you do not know, say so. " +
+      "In discussion say when you disagree and show why, do not agree to be polite; do not repeat what your partner wrote, write what is missing or wrong.",
+    dPostNote: "Write an analysis/findings note (the user reads it in the app). In the ANALYZE step this is your kickoff note.",
+    dDiscuss: "Reply in a discussion. stance: agree (closes the discussion) | object (disagree, with the reason) | propose (new proposal).",
+    dOpenThread: "Open a discussion with your partner: approach, design decision, objection. task=related task id.",
+    dReadThread: "Without id: list of discussions; with id: notes and all messages.",
+    dDropTask: "[Captain] Delete a TODO task.",
+    kickoffFirst: "The joint analysis and discussion must finish first (call next_action).",
+    noThread: "No such discussion, or it is closed.",
+    notYourTurn: "It is your partner's turn.",
+    tooManyThreads: "You have {n} open discussions; let those close first.",
+    unbalanced: "The load is uneven ({split}). Unless you have a reason, rebalance with assign_task.",
+    topicKickoff: "Kickoff: comparing the two analyses",
+    topicPlan: "Plan and split of work",
+    evNote: "wrote a note: {title}",
+    evKickoffNote: "wrote its kickoff analysis",
+    evKickoffOpen: "both analyses are in → discussion #{id} opened",
+    evPost: "discussion #{id}: {stance}",
+    evThreadAgreed: "discussion #{id} closed in agreement",
+    evThreadSplit: "discussion #{id} closed split (message limit)",
+    evThreadOpened: "opened discussion #{id}: {topic}",
+    evNoTasks: "plan: no tasks (analysis only)",
+    evDropped: "deleted task #{id}",
   },
 } as const;
 

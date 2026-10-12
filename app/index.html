@@ -13,7 +13,7 @@
     <label><span data-i18n="project"></span>
       <select id="project"></select>
     </label>
-    <button id="pick" data-i18n-title="pickTitle">📁</button>
+    <button id="pick" data-i18n-title="pickTitle" data-i18n="pick"></button>
     <label><span data-i18n="captain"></span>
       <select id="captain"><option value="claude">Claude</option><option value="codex">Codex</option></select>
     </label>
@@ -21,6 +21,12 @@
       <select id="mode">
         <option value="after_all" data-i18n="modeAfterAll"></option>
         <option value="immediate" data-i18n="modeImmediate"></option>
+      </select>
+    </label>
+    <label data-i18n-title="kickoffTitle"><span data-i18n="kickoff"></span>
+      <select id="kickoff">
+        <option value="joint" data-i18n="kickoffJoint"></option>
+        <option value="solo" data-i18n="kickoffSolo"></option>
       </select>
     </label>
     <span class="spacer"></span>
@@ -40,20 +46,16 @@
       </select>
     </label>
     <span class="grp"><b>Claude</b>
-      <input id="model-claude" list="models-claude" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off">
-      <select id="effort-claude" data-i18n-title="effortTitle">
-        <option value="" data-i18n="effortDefault"></option><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option>
-      </select>
+      <select id="model-claude" class="model" data-i18n-title="modelTitle"></select>
+      <input id="model-claude-custom" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off" hidden>
+      <select id="effort-claude" data-i18n-title="effortTitle"></select>
     </span>
     <span class="grp"><b>Codex</b>
-      <input id="model-codex" list="models-codex" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off">
-      <select id="effort-codex" data-i18n-title="effortTitle">
-        <option value="" data-i18n="effortDefault"></option><option>low</option><option>medium</option><option>high</option><option>xhigh</option>
-      </select>
+      <select id="model-codex" class="model" data-i18n-title="modelTitle"></select>
+      <input id="model-codex-custom" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off" hidden>
+      <select id="effort-codex" data-i18n-title="effortTitle"></select>
     </span>
     <span class="note" data-i18n="modelsNote"></span>
-    <datalist id="models-claude"></datalist>
-    <datalist id="models-codex"></datalist>
   </div>
   <div class="brief">
     <label for="brief" data-i18n="briefLabel"></label>
@@ -72,7 +74,18 @@
         <button data-start="codex" data-i18n="start"></button><button data-kill="codex" data-i18n="stop"></button></div>
       <div class="term" id="term-codex"></div>
     </section>
+    <section id="reader" class="reader" hidden>
+      <div class="bar"><span data-i18n="tabTalk"></span>
+        <button id="talk-export" data-i18n="exportTalk"></button><button id="reader-close" data-i18n="close"></button></div>
+      <div id="reader-body" class="reader-body"></div>
+    </section>
     <aside class="side">
+      <nav class="tabs">
+        <button id="tab-board" class="on" data-i18n="tabBoard"></button>
+        <button id="tab-talk"><span data-i18n="tabTalk"></span> <small id="talk-count"></small></button>
+      </nav>
+      <ul id="talk-list" class="talk-list" hidden></ul>
+      <div id="view-board" class="view">
       <h2><span data-i18n="boardTitle"></span> <small id="summary"></small></h2>
       <ul id="tasks" class="tasks"></ul>
       <section id="decision" class="decision" hidden>
@@ -88,6 +101,7 @@
       </section>
       <h2 data-i18n="eventsTitle"></h2>
       <ul id="events" class="events"></ul>
+      </div>
     </aside>
   </main>
   <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
