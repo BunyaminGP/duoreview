@@ -13,4 +13,6 @@
 - Chained replies: mutating tools return the next step and `next_action` takes the next task itself (four tool calls for a plain task in the measured scenario; kickoff, discussions and rework excluded). `status(id)` returns one task in full.
 - Task dependencies (`depends_on` in `post_tasks`); a task cannot be taken while the plan discussion is open; path normalisation in the file-conflict guard.
 - Per-agent counters for tool calls and characters sent/received, shown in the header.
+- Fix: a message containing approval-prompt wording (e.g. "do you want to") was mistaken for an approval question once echoed, so Enter was never pressed and the message was retried forever.
+- Publishable npm package: only the MCP server is shipped (`dist/`); Electron, node-pty and xterm moved to devDependencies.
 - Model menus list all models (Codex from `~/.codex/models_cache.json`) with per-model effort levels.

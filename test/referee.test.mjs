@@ -188,6 +188,15 @@ db.close(); rmSync(dir, { recursive: true, force: true });
   t3 += 10_000; ref3.tick();
   assert.equal(ref3.awaitingApproval("codex"), false);
   assert.notEqual(ref3.statuses().codex.status, "approval");
+  // Ortağın mesajındaki onay kalıbı yankılanınca onay sorusu sanılmamalı (yoksa Enter basılmaz, mesaj hiç teslim edilmez)
+  out.length = 0;
+  db3.prepare("INSERT INTO messages(sender, recipient, kind, text) VALUES ('claude','codex','prompt',?)")
+    .run("Do you want to keep (y/n)? › 1. Yes, and trust this folder");
+  t3 += 10_000; ref3.tick();
+  assert.equal(out.length, 1);
+  assert.match(out[0][1], /keep/);
+  ref3.noteInput("codex"); ref3.noteOutput("codex", out[0][1]);
+  assert.equal(ref3.awaitingApproval("codex"), false, "hakemin kendi yazdığı metin onay sorusu değildir");
   console.log("AÇILIŞ MENÜLERİ OK");
   db3.close(); rmSync(dir3, { recursive: true, force: true });
 }

@@ -16,6 +16,12 @@ const APPROVAL = new RegExp([
   "update\\s*now|trust\\s*this\\s*folder|trust\\s*and\\s*continue|enter\\s*continue",
   "[›❯]\\s*1\\.\\s*\\S", // seçim imleci numaralı bir seçenekte duruyor
 ].join("|"), "i");
+// Hakemin yazdığı metin terminalde yankılanır. İçinde onay kalıbı geçerse (ör. ortağın mesajında "do you want to")
+// inject kendi yankısını onay sorusu sanar, Enter'a basmaz ve mesaj sonsuza dek yeniden denenir. Eşleşme "_" ile bozulur.
+function defuse(text) {
+  for (let m; (m = APPROVAL.exec(text));) text = text.slice(0, m.index + 1) + "_" + text.slice(m.index + 1);
+  return text;
+}
 const COOLDOWN_MS = 90_000;
 const MAX_SAME_NUDGES = 3;
 
@@ -76,7 +82,7 @@ async function createReferee({ distDir, getDb, write, blocked = () => null, now 
             flow.logEvent(db, "app", `${agent}: ${why}`);
           };
           try {
-            const result = write(agent, text.replace(/\s*\n\s*/g, " "));
+            const result = write(agent, defuse(text.replace(/\s*\n\s*/g, " ")));
             if (result?.then) result.then(finish, () => finish(false));
             else finish(result);
           } catch { finish(false); }

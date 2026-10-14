@@ -2,33 +2,45 @@
   "name": "duoreview",
   "version": "0.1.0",
   "type": "module",
-  "private": true,
   "bin": {
     "duoreview": "dist/server.js"
   },
+  "files": [
+    "dist",
+    "TEAM.md",
+    "README.tr.md"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
     "app": "npm run build && electron .",
     "test": "npm run build && node test/e2e.mjs && node test/joint.test.mjs && node test/deps.test.mjs && node test/referee.test.mjs && node test/usage.test.mjs && node test/i18n.test.mjs && node test/agents.test.mjs && node test/validate.test.mjs && node test/inject.test.mjs && node test/models.test.mjs && node test/electron-node.mjs",
-    "tokens": "npm run build && node test/tokens.mjs"
+    "tokens": "npm run build && node test/tokens.mjs",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
-    "electron": "^44.7.0",
-    "node-pty": "^1.1.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "electron": "^44.7.0",
+    "node-pty": "^1.1.0",
     "typescript": "^5.6.0"
   },
   "main": "app/main.js",
   "description": "Let Claude Code and Codex split a job, cross-review each other and hand disputes to you. MCP server + Electron app.",
   "license": "MIT",
   "author": "Bünyamin Güneypınar",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BunyaminGP/duoreview.git"
+  },
+  "homepage": "https://github.com/BunyaminGP/duoreview#readme",
+  "bugs": "https://github.com/BunyaminGP/duoreview/issues",
+  "mcpName": "io.github.BunyaminGP/duoreview",
   "engines": {
     "node": ">=22.13.0"
   },
