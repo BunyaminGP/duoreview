@@ -1,6 +1,8 @@
 // Model seçim listeleri. Codex: CLI'ın kendi önbelleği (~/.codex/models_cache.json), yoksa eski oturumlarda görülen adlar.
 // Claude Code yerelde model listesi tutmaz; takma adlar her zaman güncel modele gider, tam adlar sürümü sabitler.
+// Gemini (agy): `agy models` hesabın kullanabildiği modelleri ağdan getirir.
 const fs = require("node:fs");
+const { execFile } = require("node:child_process");
 const os = require("node:os");
 const path = require("node:path");
 
@@ -32,4 +34,15 @@ function codexModels(home = os.homedir(), seen = []) {
   return { models, current };
 }
 
-module.exports = { CLAUDE_MODELS, CLAUDE_EFFORTS, codexModels };
+const GEMINI_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+/** `agy models` çıktısı: her model bir satırda "id<TAB>ad"; başlık satırında sekme yoktur. */
+const parseAgyModels = (text) => text.split(/\r?\n/).map((l) => l.split("\t"))
+  .filter(([id, label]) => label && /^[\w.:/-]+$/.test(id))
+  .map(([id, label]) => ({ id, label: label.trim(), efforts: GEMINI_EFFORTS }));
+
+function geminiModels(agy) {
+  return new Promise((resolve) => execFile(agy, ["models"], { timeout: 20_000, windowsHide: true },
+    (err, out) => resolve(err ? [] : parseAgyModels(out))));
+}
+
+module.exports = { CLAUDE_MODELS, CLAUDE_EFFORTS, codexModels, parseAgyModels, geminiModels };

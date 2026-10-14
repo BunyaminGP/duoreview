@@ -3,12 +3,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { readFileSync } from "node:fs";
-import { openDb, other, AGENTS, MAX_REVIEW_ROUNDS, MAX_OPEN_THREADS, type Agent } from "./db.js";
+import { openDb, AGENTS, MAX_REVIEW_ROUNDS, MAX_OPEN_THREADS, type Agent } from "./db.js";
 import { t as tr } from "./i18n.js";
 import {
   all, one, run, tx, logEvent, captainOf, reviewMode, reviewPhaseOpen, quota,
   claimable, nextAction, compact, briefing, kickoffOf, planned, total, setMeta, kickoffNote, postsOf, myTurn,
-  openThread, addPost, type Task, type Thread,
+  openThread, addPost, teamOf, others, reviewerOf, type Task, type Thread,
 } from "./flow.js";
 
 const me = process.env.AGENT_ID as Agent | undefined;
@@ -21,7 +21,6 @@ if (!process.env.DUOREVIEW_DIR) {
   process.exit(1);
 }
 const db = openDb(process.env.DUOREVIEW_DIR);
-const partner = other(me);
 const delivered = new Set<number | string>(); // bu oturumda gönderilen görev tarifleri, notlar, mesajlar (süreç = ajan oturumu)
 let briefed = false; // kurallar oturumun ilk next_action cevabıyla bir kez gider
 
@@ -86,7 +85,7 @@ tool(
       title: z.string(),
       description: z.string().default(""),
       touches: z.array(z.string()).default([]),
-      assignee: z.enum(["claude", "codex"]).optional(),
+      assignee: z.enum(AGENTS as [Agent, ...Agent[]]).optional(),
       depends_on: z.array(z.number()).default([]),
     })),
   },
@@ -95,13 +94,16 @@ tool(
     const joint = kickoffOf(db) === "joint";
     const first = total(db) === 0 && !planned(db);
     if (joint && first && nextAction(db, me).action !== "PLAN") return fail(tr("kickoffFirst"));
+    const team = teamOf(db);
+    const outside = [...new Set(tasks.map((t) => t.assignee).filter((a) => a && !team.includes(a)))];
+    if (outside.length) return fail(tr("notInTeamAssignee", { who: outside.join(", "), team: team.join(", ") }));
     const missing = [...new Set(tasks.flatMap((t) => t.depends_on))].filter((id) => !one(db, "SELECT id FROM tasks WHERE id=?", id));
     if (missing.length) return fail(tr("badDeps", { ids: missing.join(", ") }));
     const { ids, per } = tx(db, () => {
       const ids = tasks.map((t) => Number(run(db, "INSERT INTO tasks(title, description, touches, assignee, depends_on) VALUES (?,?,?,?,?)",
         t.title, t.description, JSON.stringify(t.touches), t.assignee ?? null, JSON.stringify(t.depends_on)).lastInsertRowid));
       setMeta(db, "planned", "1");
-      const per = Object.fromEntries(AGENTS.map((a) => [a, all<Task>(db, "SELECT id FROM tasks WHERE assignee=?", a).length]));
+      const per = Object.fromEntries(team.map((a) => [a, all<Task>(db, "SELECT id FROM tasks WHERE assignee=?", a).length]));
       // Ortak kipte ilk plan ortağın onayından geçer: iş bölümü tek kişinin kararı olmasın.
       if (joint && first && tasks.length) {
         const lines = tasks.map((t, i) => `#${ids[i]} ${t.title} → ${t.assignee ?? "?"}${t.touches.length ? ` [${t.touches.join(", ")}]` : ""}${t.depends_on.length ? ` ← ${t.depends_on.map((d) => "#" + d).join(" ")}` : ""}`);
@@ -110,8 +112,9 @@ tool(
       return { ids, per };
     });
     log(tasks.length ? tr("evTasksAdded", { n: tasks.length }) : tr("evNoTasks"));
-    const uneven = Math.abs(per.claude - per.codex) > 1;
-    return done({ ids, per, quota: quota(db), warn: uneven ? tr("unbalanced", { split: `claude ${per.claude}, codex ${per.codex}` }) : undefined });
+    const counts = Object.values(per);
+    const uneven = Math.max(...counts) - Math.min(...counts) > 1;
+    return done({ ids, per, quota: quota(db), warn: uneven ? tr("unbalanced", { split: team.map((a) => `${a} ${per[a]}`).join(", ") }) : undefined });
   },
 );
 
@@ -124,9 +127,10 @@ tool("drop_task", tr("dDropTask"), { id: z.number() }, async ({ id }) => {
 });
 
 tool("assign_task", tr("dAssignTask"),
-  { id: z.number(), assignee: z.enum(["claude", "codex"]) },
+  { id: z.number(), assignee: z.enum(AGENTS as [Agent, ...Agent[]]) },
   async ({ id, assignee }) => {
     if (captainOf(db) !== me) return fail(tr("onlyCaptainShort"));
+    if (!teamOf(db).includes(assignee)) return fail(tr("notInTeamAssignee", { who: assignee, team: teamOf(db).join(", ") }));
     const r = run(db, "UPDATE tasks SET assignee=?, updated_at=datetime('now') WHERE id=? AND status='TODO'", assignee, id);
     if (!r.changes) return fail(tr("notTodoOrMissing"));
     log(tr("evAssigned", { id, who: assignee }));
@@ -194,6 +198,7 @@ tool("review_task",
     const t = one<Task>(db, "SELECT * FROM tasks WHERE id=?", id);
     if (!t || t.status !== "REVIEW") return fail(tr("notInReview"));
     if (t.owner === me) return fail(tr("ownWork"));
+    if (reviewerOf(db, t) !== me) return fail(tr("notYourReview", { who: reviewerOf(db, t) }));
     if (!reviewPhaseOpen(db)) return fail(tr("reviewClosed"));
     if (verdict === "request_changes") {
       if (!comment.trim()) return fail(tr("needReason"));
@@ -217,10 +222,12 @@ tool("review_task",
 
 tool("send_prompt",
   tr("dSendPrompt"),
-  { text: z.string().min(1).max(2000) },
-  async ({ text }) => {
-    run(db, "INSERT INTO messages(sender, recipient, kind, text) VALUES (?,?, 'prompt', ?)", me, partner, text);
-    log(tr("evPrompt", { partner, text: text.slice(0, 80) }));
+  { text: z.string().min(1).max(2000), to: z.enum(AGENTS as [Agent, ...Agent[]]).optional() },
+  async ({ text, to }) => {
+    if (to && (to === me || !teamOf(db).includes(to))) return fail(tr("badRecipient", { team: others(db, me).join(", ") }));
+    const recipients = to ? [to] : others(db, me);
+    for (const r of recipients) run(db, "INSERT INTO messages(sender, recipient, kind, text) VALUES (?,?, 'prompt', ?)", me, r, text);
+    log(tr("evPrompt", { partner: recipients.join(", "), text: text.slice(0, 80) }));
     return reply("ok");
   },
 );
@@ -238,7 +245,7 @@ tool("post_note", tr("dPostNote"),
     const kickoff = kickoffOf(db) === "joint" && total(db) === 0 && !planned(db) && !kickoffNote(db, me);
     run(db, "INSERT INTO notes(author, kind, title, text) VALUES (?,?,?,?)", me, kickoff ? "kickoff" : "note", title, text);
     log(kickoff ? tr("evKickoffNote") : tr("evNote", { title: title || text.slice(0, 60) }));
-    if (kickoff && kickoffNote(db, partner)) {
+    if (kickoff && others(db, me).every((a) => kickoffNote(db, a))) {
       const id = openThread(db, { kind: "kickoff", topic: tr("topicKickoff"), by: captainOf(db), blocking: true });
       logEvent(db, "app", tr("evKickoffOpen", { id }));
     }

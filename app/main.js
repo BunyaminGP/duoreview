@@ -1,16 +1,16 @@
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, screen } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const crypto = require("node:crypto");
 const { pathToFileURL } = require("node:url");
 const pty = require("node-pty");
-const { buildSpec } = require("./agents");
+const { buildSpec, resolveGemini, registerGemini, unregisterGemini } = require("./agents");
 const { protocol } = require("./protocol");
 const { describeSpawnError } = require("./errtext");
-const { createReferee, AGENTS } = require("./referee");
+const { createReferee } = require("./referee");
 const usageLib = require("./usage");
 const { createInjector } = require("./inject");
-const { CLAUDE_MODELS, codexModels } = require("./models");
+const { CLAUDE_MODELS, codexModels, geminiModels } = require("./models");
 const { talkMarkdown } = require("./talkmd");
 const I18N = require("./i18n");
 const V = require("./validate");
@@ -22,9 +22,12 @@ const DEFAULT_CFG = {
   reviewMode: "after_all",
   kickoff: "joint",
   profile: "dengeli",
-  models: { claude: "sonnet", codex: "" },     // "" = ajanın kendi varsayılanı
-  efforts: { claude: "medium", codex: "medium" },
+  models: { claude: "sonnet", codex: "", gemini: "" },     // "" = ajanın kendi varsayılanı
+  efforts: { claude: "medium", codex: "medium", gemini: "medium" },
 };
+const geminiPath = () => { try { return resolveGemini(); } catch { return null; } };
+// Takım kaydedilmemişse agy kuruluysa üçlü, değilse eski ikili
+const defaultTeam = () => (geminiPath() ? ["claude", "codex", "gemini"] : ["claude", "codex"]);
 const FAKE = !!process.env.DUOREVIEW_FAKE; // gerçek ajan yerine cmd.exe (hakem denemeleri için)
 
 const terms = {}; // agent -> pty
@@ -48,7 +51,7 @@ const cfgFor = (dir) => {
   // Kullanıcı talimatı hiç değiştirmediyse varsayılan metin geçerli dilde gösterilir
   const stock = Object.values(I18N.STR).some((s) => s.defaultBrief === saved.brief);
   return {
-    ...DEFAULT_CFG, ...saved,
+    ...DEFAULT_CFG, team: defaultTeam(), ...saved,
     brief: !saved.brief || stock ? t("defaultBrief") : saved.brief,
     models: { ...DEFAULT_CFG.models, ...saved.models },
     efforts: { ...DEFAULT_CFG.efforts, ...saved.efforts },
@@ -101,10 +104,12 @@ function startAgent(agent, cols = 100, rows = 30) {
     const cfg = cfgFor(projectDir);
     const spec = FAKE ? { file: process.platform === "win32" ? "cmd.exe" : process.env.SHELL || "/bin/sh", args: [] }
       : buildSpec(agent, dataDirFor(projectDir), { model: cfg.models[agent], effort: cfg.efforts[agent] });
+    if (agent === "gemini" && !FAKE) registerGemini(dataDirFor(projectDir));
     term = pty.spawn(spec.file, spec.args, {
       name: "xterm-256color", cols, rows, cwd: projectDir, env: cleanEnv(),
     });
   } catch (e) {
+    if (agent === "gemini" && !FAKE) unregisterGemini();
     const { summary, terminalText } = describeSpawnError(agent, e);
     send("pty:data", { agent, data: terminalText });
     flow.logEvent(db, "app", summary);
@@ -118,6 +123,7 @@ function startAgent(agent, cols = 100, rows = 30) {
   term.onData((data) => { lastData[agent] = Date.now(); referee.noteOutput(agent, data); send("pty:data", { agent, data }); });
   term.onExit(({ exitCode }) => {
     delete terms[agent];
+    if (agent === "gemini" && !FAKE) unregisterGemini();
     referee.stop(agent);
     send("pty:exit", { agent, exitCode });
     send("state", stateSnapshot());
@@ -144,12 +150,13 @@ function board() {
 }
 
 // ---- kalan kullanım --------------------------------------------------------
-let usage = { claude: null, codex: null };
+let usage = { claude: null, codex: null, gemini: null };
 function refreshUsage() {
   try {
     usage = {
       codex: usageLib.readCodexUsage(),
       claude: usageLib.readClaudeUsage(path.join(dataDirFor(projectDir), "claude-status.json")),
+      gemini: { ok: false, note: t("noGeminiUsage") },
     };
   } catch (e) { console.error("usage", e); }
 }
@@ -172,8 +179,9 @@ function tickLoop() {
 
 // ---- pencere -------------------------------------------------------------
 function createWindow() {
+  const area = screen.getPrimaryDisplay().workAreaSize; // üç terminal yan yana: ekran elverdiğince geniş
   win = new BrowserWindow({
-    width: 1600, height: 920, backgroundColor: "#0f1115", title: "DuoReview",
+    width: Math.min(1920, area.width), height: Math.min(1000, area.height), backgroundColor: "#0f1115", title: "DuoReview",
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   win.setMenuBarVisibility(false);
@@ -211,10 +219,14 @@ ipcMain.handle("lang:set", (_e, code) => {
   send("state", stateSnapshot());
   send("board", board());
 });
-ipcMain.handle("models:list", () => ({
-  claude: { models: CLAUDE_MODELS, current: "" },
-  codex: codexModels(undefined, usageLib.listCodexModels()),
-}));
+ipcMain.handle("models:list", async () => {
+  const agy = geminiPath();
+  return {
+    claude: { models: CLAUDE_MODELS, current: "" },
+    codex: codexModels(undefined, usageLib.listCodexModels()),
+    gemini: { models: agy ? await geminiModels(agy) : [], current: "" },
+  };
+});
 ipcMain.handle("talk:get", () => flow.discussion(db));
 const talkLabels = () => Object.fromEntries(
   ["kickoff", "note", "OPEN", "CLOSED", "agreed", "split", "propose", "object", "agree"].map((k) => [k, t("k_" + k)]));
@@ -242,22 +254,28 @@ process.on("uncaughtException", (e) => console.error("uncaught", e));
 ipcMain.on("team:start", (_e, payload = {}) => {
   const cfg = V.sanitizeCfg(payload.cfg);
   const sizes = payload.sizes && typeof payload.sizes === "object" ? payload.sizes : {};
+  // Görev çıkmamış bir turdan (yalnız inceleme) sonra yeni talimat gelirse açılış baştan yapılır; eski notlar kalır.
+  const restart = flow.total(db) === 0 && flow.getMeta(db, "brief", cfg.brief) !== cfg.brief;
+  if (!restart && flow.teamChangeBlocked(db, cfg.team)) {
+    dialog.showMessageBox(win, { type: "warning", message: t("teamLocked", { team: flow.teamOf(db).join(" + ") }) });
+    return;
+  }
   patchSettings((s) => { s.byProject = { ...s.byProject, [projectDir]: cfg }; });
+  flow.setMeta(db, "team", cfg.team.join(","));
   flow.setMeta(db, "captain", cfg.captain);
   flow.setMeta(db, "review_mode", cfg.reviewMode);
   flow.setMeta(db, "kickoff", cfg.kickoff);
-  // Görev çıkmamış bir turdan (yalnız inceleme) sonra yeni talimat gelirse açılış baştan yapılır; eski notlar kalır.
-  if (flow.total(db) === 0 && flow.getMeta(db, "brief", cfg.brief) !== cfg.brief) {
+  if (restart) {
     db.exec("UPDATE notes SET kind='note' WHERE kind='kickoff'");
     db.exec("UPDATE threads SET status='CLOSED', outcome=COALESCE(outcome,'split') WHERE status='OPEN'");
     flow.setMeta(db, "planned", "0");
   }
   flow.setMeta(db, "brief", cfg.brief);
-  flow.logEvent(db, "app", t("evTeamStarted", { captain: cfg.captain, mode: t(cfg.reviewMode === "immediate" ? "evModeImmediate" : "evModeAfterAll"), kickoff: t(cfg.kickoff === "joint" ? "kickoffJoint" : "kickoffSolo") }));
+  flow.logEvent(db, "app", t("evTeamStarted", { team: cfg.team.join(", "), captain: cfg.captain, mode: t(cfg.reviewMode === "immediate" ? "evModeImmediate" : "evModeAfterAll"), kickoff: t(cfg.kickoff === "joint" ? "kickoffJoint" : "kickoffSolo") }));
   const resume = db.prepare("SELECT COUNT(*) n FROM tasks").get().n > 0;
   if (resume) flow.logEvent(db, "app", t("evResume"));
-  for (const a of AGENTS) {
-    pendingInitial[a] = protocol(a);
+  for (const a of cfg.team) {
+    pendingInitial[a] = protocol(a, cfg.team);
     startAgent(a, V.dim(sizes[a]?.cols, 100), V.dim(sizes[a]?.rows, 30));
   }
 });
@@ -303,6 +321,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
+  if (terms.gemini && !FAKE) unregisterGemini();
   Object.values(terms).forEach((t) => t.kill());
   try { db?.close(); } catch {}
   app.quit();

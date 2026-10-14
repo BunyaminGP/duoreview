@@ -16,3 +16,4 @@
 - Fix: a message containing approval-prompt wording (e.g. "do you want to") was mistaken for an approval question once echoed, so Enter was never pressed and the message was retried forever.
 - Publishable npm package: only the MCP server is shipped (`dist/`); Electron, node-pty and xterm moved to devDependencies.
 - Model menus list all models (Codex from `~/.codex/models_cache.json`) with per-model effort levels.
+- Gemini through the Antigravity CLI (`agy`) as a third agent. Team menu: Claude + Codex + Gemini or any two; kickoff notes stay hidden until all are in, turns rotate, a discussion closes once everyone but the last proposer agrees, and each task's reviewer is the next agent after its owner. `send_prompt` takes an optional `to`. The app registers the `duoreview` MCP server and the `mcp(duoreview/*)` permission in `agy`'s global settings while Gemini runs and removes them when it stops; `DUOREVIEW_GEMINI_BIN` override.

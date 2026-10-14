@@ -26,10 +26,10 @@ export const MESSAGES = {
     evReopened: "#{id} ihtilafını yeniden incelemeye açtı",
     // sunucu (server.ts)
     errPrefix: "HATA",
-    needAgentId: 'AGENT_ID env zorunlu: "claude" veya "codex"',
+    needAgentId: 'AGENT_ID env zorunlu: "claude", "codex" ya da "gemini"',
     needDataDir: "DUOREVIEW_DIR env zorunlu (veri klasörü)",
     dNextAction: "Sıradaki adımı verir; sıradaki iş senin görevinse üstlenir. Cevabında next olmayan adımdan sonra çağır.",
-    dPostTasks: "[Kaptan] Görev ekle. touches=dokunulacak dosya/klasörler, assignee=claude|codex, depends_on=önce bitmesi gereken mevcut görev id'leri.",
+    dPostTasks: "[Kaptan] Görev ekle. touches=dokunulacak dosya/klasörler, assignee=takımdaki ajan (claude|codex|gemini), depends_on=önce bitmesi gereken mevcut görev id'leri.",
     dAssignTask: "[Kaptan] TODO görevi ata/yeniden ata.",
     dStatus: "Pano özeti (satır başına bir görev). detail=true: özet ve son inceleme notları da gelir. id: o görevin tam tarifi.",
     dClaimTask: "Belirli bir TODO görevi üstlen (next_action sıradakini kendisi üstlenir); cevapta görev tarifi gelir.",
@@ -40,7 +40,7 @@ export const MESSAGES = {
       "Önceki bulgular kapandıysa onayla; yeni köşe durumu arayıp turu uzatma. " +
       "Aynı işi belirgin biçimde daha sade ya da hızlı yapmanın yolunu görüyorsan comment'e somut olarak yaz (hangi dosya, nasıl). " +
       "İstenmemiş dosya/soyutlama ve ilgisiz değişiklik major sayılır.",
-    dSendPrompt: "Ortağın terminaline prompt yaz (boşa çıkınca teslim edilir). Kısa ve kendi kendine yeten olsun.",
+    dSendPrompt: "Ortağının terminaline prompt yaz (boşa çıkınca teslim edilir). to yoksa tüm ortaklarına gider. Kısa ve kendi kendine yeten olsun.",
     dReadInbox: "Okunmamış mesajlar.",
     onlyCaptain: "Yetki kaptanda ({captain}).",
     onlyCaptainShort: "Yalnız kaptan.",
@@ -49,6 +49,11 @@ export const MESSAGES = {
     notYours: "Bu görev sende değil ya da gönderilebilir durumda değil.",
     notInReview: "Görev incelemede değil.",
     ownWork: "Kendi işini inceleyemezsin.",
+    notYourReview: "Bu görevin inceleyicisi {who}.",
+    notInTeam: "Bu oturumda takımda değilsin (takım: {team}).",
+    notInTeamAssignee: "Takımda olmayan ajan: {who} (takım: {team}).",
+    badRecipient: "Alıcı ortaklarından biri olmalı: {team}.",
+    teamLine: "Takım: {team}.",
     reviewClosed: "İnceleme aşaması henüz açılmadı: önce tüm görevler bitmeli.",
     needReason: "Değişiklik isterken gerekçe yaz.",
     needSeverity:
@@ -76,15 +81,15 @@ export const MESSAGES = {
       "REVIEW→git diff/grep ile değişen kısımları oku, mümkünse çalıştır, review_task | REWORK→bulguları düzelt, submit_task | " +
       "DISCUSS→gelen not ve mesajları oku, discuss ile yanıtla | WAIT→dur, uygulama seni uyandırır, yoklama yapma | " +
       "Görev tarifini yeniden okumak için status(id). " +
-      "ALL_DONE→status(detail) ile kullanıcıya kısa özet ver. Ortağın görevindeki dosyalara dokunma. " +
-      "Tasarım kararı belirsizse koda başlamadan open_thread ile ortağına sor. " +
+      "ALL_DONE→status(detail) ile kullanıcıya kısa özet ver. Ortaklarının görevlerindeki dosyalara dokunma. " +
+      "Tasarım kararı belirsizse koda başlamadan open_thread ile ortaklarına sor. " +
       "Projenin kurallarına uy; commit, push, merge yapma, anahtar dosyalarına dokunma.",
     loopJoint:
       "Ortak açılış: ANALYZE→talimatı kendi başına yerine getir (kodu oku, talimat istiyorsa internette araştır); ortağını bekleme, " +
-      "bulgularını post_note ile yaz. Notlar ikiniz de yazana kadar birbirinizden gizlidir, sonra DISCUSS ile farkları tartışırsınız. " +
-      "PLAN (kaptan)→iki notu ve tartışmayı birleştir, post_tasks ile işleri iki ajana dengeli böl; iş çıkmıyorsa post_tasks(tasks:[]). " +
-      "Plan da ortağın onayından geçer.",
-    loopSolo: "PLAN (kaptan)→talimatı incele, post_tasks ile işleri iki ajana dengeli böl.",
+      "bulgularını post_note ile yaz. Notlar hepiniz yazana kadar birbirinizden gizlidir, sonra DISCUSS ile farkları tartışırsınız. " +
+      "PLAN (kaptan)→notları ve tartışmayı birleştir, post_tasks ile işleri takımdaki ajanlara dengeli böl; iş çıkmıyorsa post_tasks(tasks:[]). " +
+      "Plan da ortakların onayından geçer.",
+    loopSolo: "PLAN (kaptan)→talimatı incele, post_tasks ile işleri takımdaki ajanlara dengeli böl.",
     reviewNow: "İnceleme anında.",
     reviewLater: "İnceleme tüm işler bitince.",
     style:
@@ -95,20 +100,20 @@ export const MESSAGES = {
       "'kapsamlı/sağlam/sorunsuz' türü sıfatlar yok; iddiayı dosya:satır, sayı ya da komut çıktısıyla destekle; bilmiyorsan öyle yaz. " +
       "Tartışmada katılmıyorsan söyle ve nedenini göster, nezaketen onaylama; ortağının yazdığını tekrar etme, eksik ya da yanlış bulduğunu yaz.",
     dPostNote: "Analiz/bulgu notu yaz (kullanıcı uygulamada okur). ANALYZE adımında açılış notun budur.",
-    dDiscuss: "Tartışmaya yanıt yaz. stance: agree (katılıyorum, tartışma kapanır) | object (katılmıyorum, gerekçesiyle) | propose (yeni öneri).",
-    dOpenThread: "Ortağınla tartışma aç: yaklaşım, tasarım kararı, itiraz. task=ilgili görev no.",
+    dDiscuss: "Tartışmaya yanıt yaz. stance: agree (katılıyorum; son öneriyi yazan dışında herkes agree deyince tartışma kapanır) | object (katılmıyorum, gerekçesiyle) | propose (yeni öneri).",
+    dOpenThread: "Ortaklarınla tartışma aç: yaklaşım, tasarım kararı, itiraz. task=ilgili görev no.",
     dReadThread: "id yoksa tartışma listesi; id ile notlar ve tüm mesajlar.",
     dDropTask: "[Kaptan] TODO görevi sil.",
     kickoffFirst: "Önce ortak inceleme ve tartışma bitmeli (next_action çağır).",
     noThread: "Tartışma yok ya da kapanmış.",
-    notYourTurn: "Söz sırası ortağında.",
+    notYourTurn: "Söz sırası sende değil.",
     tooManyThreads: "Açık {n} tartışman var; önce onlar kapansın.",
     unbalanced: "Yük dengesiz ({split}). Gerekçen yoksa assign_task ile dengele.",
-    topicKickoff: "Açılış: iki incelemenin karşılaştırması",
+    topicKickoff: "Açılış: incelemelerin karşılaştırması",
     topicPlan: "Plan ve iş bölümü",
     evNote: "not yazdı: {title}",
     evKickoffNote: "açılış incelemesini yazdı",
-    evKickoffOpen: "iki inceleme de hazır → tartışma #{id} açıldı",
+    evKickoffOpen: "tüm incelemeler hazır → tartışma #{id} açıldı",
     evPost: "tartışma #{id}: {stance}",
     evThreadAgreed: "tartışma #{id} uzlaşmayla kapandı",
     evThreadSplit: "tartışma #{id} ayrışmayla kapandı (mesaj sınırı)",
@@ -137,10 +142,10 @@ export const MESSAGES = {
     userReopenDefault: "review the latest fixes.",
     evReopened: "#{id} dispute reopened for review",
     errPrefix: "ERROR",
-    needAgentId: 'AGENT_ID env is required: "claude" or "codex"',
+    needAgentId: 'AGENT_ID env is required: "claude", "codex" or "gemini"',
     needDataDir: "DUOREVIEW_DIR env is required (data directory)",
     dNextAction: "Returns the next step and takes the task if it is yours. Call it after a step whose reply had no next.",
-    dPostTasks: "[Captain] Add tasks. touches=files/folders to be modified, assignee=claude|codex, depends_on=ids of existing tasks that must be done first.",
+    dPostTasks: "[Captain] Add tasks. touches=files/folders to be modified, assignee=an agent in the team (claude|codex|gemini), depends_on=ids of existing tasks that must be done first.",
     dAssignTask: "[Captain] Assign/reassign a TODO task.",
     dStatus: "Board summary (one task per line). detail=true also returns summaries and the latest review notes. id: that task's full spec.",
     dClaimTask: "Take a specific TODO task (next_action takes the next one by itself); the reply contains the task spec.",
@@ -151,7 +156,7 @@ export const MESSAGES = {
       "If earlier findings are resolved, approve; do not hunt for new corner cases to prolong the loop. " +
       "If you see a clearly simpler or faster way to do the same job, put it in comment concretely (which file, how). " +
       "Unrequested files/abstractions and unrelated changes count as major.",
-    dSendPrompt: "Write a prompt into your partner's terminal (delivered when it goes idle). Keep it short and self-contained.",
+    dSendPrompt: "Write a prompt into a partner's terminal (delivered when it goes idle). Without to it goes to all your partners. Keep it short and self-contained.",
     dReadInbox: "Unread messages.",
     onlyCaptain: "Only the captain ({captain}) may do this.",
     onlyCaptainShort: "Captain only.",
@@ -160,6 +165,11 @@ export const MESSAGES = {
     notYours: "This task is not yours or cannot be submitted in its current state.",
     notInReview: "Task is not in review.",
     ownWork: "You cannot review your own work.",
+    notYourReview: "The reviewer of this task is {who}.",
+    notInTeam: "You are not in the team for this session (team: {team}).",
+    notInTeamAssignee: "Agent not in the team: {who} (team: {team}).",
+    badRecipient: "The recipient must be one of your partners: {team}.",
+    teamLine: "Team: {team}.",
     reviewClosed: "The review phase is not open yet: all tasks must be finished first.",
     needReason: "Give a reason when requesting changes.",
     needSeverity:
@@ -187,15 +197,15 @@ export const MESSAGES = {
       "REVIEW→read the changed parts with git diff/grep, run them if you can, review_task | REWORK→fix the findings, submit_task | " +
       "DISCUSS→read the incoming note and messages, answer with discuss | WAIT→stop, the app wakes you, do not poll | " +
       "To read a task spec again: status(id). " +
-      "ALL_DONE→give the user a short summary via status(detail). Do not touch files of your partner's task. " +
-      "If a design decision is unclear, ask your partner with open_thread before writing code. " +
+      "ALL_DONE→give the user a short summary via status(detail). Do not touch files of your partners' tasks. " +
+      "If a design decision is unclear, ask your partners with open_thread before writing code. " +
       "Follow the project's rules; do not commit, push, merge, or touch key files.",
     loopJoint:
       "Joint kickoff: ANALYZE→carry out the instruction on your own (read the code, research the web if the instruction asks for it); do not wait for your partner, " +
-      "write your findings with post_note. Notes stay hidden from each other until both are in, then you argue the differences in DISCUSS. " +
-      "PLAN (captain)→merge both notes and the discussion, split the work evenly between the two agents with post_tasks; if there is no work, post_tasks(tasks:[]). " +
-      "The plan also goes past your partner.",
-    loopSolo: "PLAN (captain)→study the instruction, split the work evenly between the two agents with post_tasks.",
+      "write your findings with post_note. Notes stay hidden from each other until all are in, then you argue the differences in DISCUSS. " +
+      "PLAN (captain)→merge the notes and the discussion, split the work evenly between the agents in the team with post_tasks; if there is no work, post_tasks(tasks:[]). " +
+      "The plan also goes past your partners.",
+    loopSolo: "PLAN (captain)→study the instruction, split the work evenly between the agents in the team with post_tasks.",
     reviewNow: "Review immediately.",
     reviewLater: "Review once all work is done.",
     style:
@@ -206,20 +216,20 @@ export const MESSAGES = {
       "no adjectives like 'comprehensive/robust/seamless'; back a claim with file:line, a number or command output; if you do not know, say so. " +
       "In discussion say when you disagree and show why, do not agree to be polite; do not repeat what your partner wrote, write what is missing or wrong.",
     dPostNote: "Write an analysis/findings note (the user reads it in the app). In the ANALYZE step this is your kickoff note.",
-    dDiscuss: "Reply in a discussion. stance: agree (closes the discussion) | object (disagree, with the reason) | propose (new proposal).",
-    dOpenThread: "Open a discussion with your partner: approach, design decision, objection. task=related task id.",
+    dDiscuss: "Reply in a discussion. stance: agree (the discussion closes once everyone but the author of the last proposal agrees) | object (disagree, with the reason) | propose (new proposal).",
+    dOpenThread: "Open a discussion with your partners: approach, design decision, objection. task=related task id.",
     dReadThread: "Without id: list of discussions; with id: notes and all messages.",
     dDropTask: "[Captain] Delete a TODO task.",
     kickoffFirst: "The joint analysis and discussion must finish first (call next_action).",
     noThread: "No such discussion, or it is closed.",
-    notYourTurn: "It is your partner's turn.",
+    notYourTurn: "It is not your turn.",
     tooManyThreads: "You have {n} open discussions; let those close first.",
     unbalanced: "The load is uneven ({split}). Unless you have a reason, rebalance with assign_task.",
-    topicKickoff: "Kickoff: comparing the two analyses",
+    topicKickoff: "Kickoff: comparing the analyses",
     topicPlan: "Plan and split of work",
     evNote: "wrote a note: {title}",
     evKickoffNote: "wrote its kickoff analysis",
-    evKickoffOpen: "both analyses are in → discussion #{id} opened",
+    evKickoffOpen: "all analyses are in → discussion #{id} opened",
     evPost: "discussion #{id}: {stance}",
     evThreadAgreed: "discussion #{id} closed in agreement",
     evThreadSplit: "discussion #{id} closed split (message limit)",

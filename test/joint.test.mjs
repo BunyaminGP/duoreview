@@ -6,11 +6,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import assert from "node:assert/strict";
 import { openDb } from "../dist/db.js";
-import { setMeta, one, discussion, nextAction, signature } from "../dist/flow.js";
+import { setMeta, one, run, discussion, nextAction, signature, teamChangeBlocked } from "../dist/flow.js";
 
-async function team() {
+async function team(members = ["claude", "codex"]) {
   const dir = mkdtempSync(join(tmpdir(), "joint-"));
   const db = openDb(dir);
+  setMeta(db, "team", members.join(","));
   setMeta(db, "captain", "claude");
   setMeta(db, "kickoff", "joint");
   setMeta(db, "brief", "projeyi analiz edin");
@@ -29,9 +30,9 @@ async function team() {
       close: () => c.close(),
     };
   };
-  const claude = await connect("claude"), codex = await connect("codex");
-  const done = async () => { await claude.close(); await codex.close(); db.close(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); };
-  return { db, claude, codex, done };
+  const claude = await connect("claude"), codex = await connect("codex"), gemini = await connect("gemini");
+  const done = async () => { for (const a of [claude, codex, gemini]) await a.close(); db.close(); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); };
+  return { db, claude, codex, gemini, done };
 }
 const next = async (a) => (await a.call("next_action")).data;
 
@@ -62,13 +63,13 @@ const next = async (a) => (await a.call("next_action")).data;
   assert.equal((await next(claude)).action, "WAIT");
   const d1 = noted.data.next;
   assert.equal(d1.action, "DISCUSS"); assert.equal(d1.kind, "kickoff");
-  assert.match(d1.note, /^CLAUDE:/); assert.equal(d1.left, 4);
+  assert.match(d1.notes[0].text, /^CLAUDE:/); assert.equal(d1.left, 4);
   assert.ok((await claude.call("discuss", { thread: d1.thread, stance: "agree", text: "x" })).err, "sıra kaptanda değil");
   await codex.call("discuss", { thread: d1.thread, stance: "object", text: "test kapsamı hakem zamanlamasını ölçmüyor" });
   assert.equal((await next(codex)).action, "WAIT");
   const d2 = await next(claude);
   assert.equal(d2.action, "DISCUSS");
-  assert.match(d2.note, /^CODEX:/);
+  assert.match(d2.notes[0].text, /^CODEX:/);
   assert.deepEqual(d2.posts, [{ by: "codex", stance: "object", text: "test kapsamı hakem zamanlamasını ölçmüyor" }]);
   const agreed = await claude.call("discuss", { thread: d1.thread, stance: "agree", text: "haklısın, plana ekliyorum" });
   assert.equal(agreed.data.result, "CLOSED:agreed");
@@ -76,7 +77,7 @@ const next = async (a) => (await a.call("next_action")).data;
   // Plan kaptanda; iş bölümü ortağın onayından geçer, o zamana dek kimse işe başlamaz
   const plan = agreed.data.next;
   assert.equal(plan.action, "PLAN"); assert.equal(plan.outcome, "agreed");
-  assert.equal(plan.note, undefined, "aynı not oturumda ikinci kez gönderilmez");
+  assert.equal(plan.notes, undefined, "aynı not oturumda ikinci kez gönderilmez");
   const posted = await claude.call("post_tasks", { tasks: [
     { title: "a", assignee: "claude", touches: ["a/"] }, { title: "b", assignee: "claude", touches: ["b/"] },
     { title: "c", assignee: "claude", touches: ["c/"] }, { title: "d", assignee: "codex", touches: ["d/"] },
@@ -139,6 +140,78 @@ const next = async (a) => (await a.call("next_action")).data;
   // Sonradan yazılan not açılış notu sayılmaz, hemen ortaktır
   await codex.call("post_note", { text: "ek bulgu" });
   assert.equal(one(db, "SELECT kind FROM notes ORDER BY id DESC").kind, "note");
+  await done();
+}
+
+// Üç ajan: notlar herkes yazınca açılır, söz sırası kaptandan sonraki işçiyle döner, son öneriyi yazan dışındaki herkes katılınca uzlaşılır.
+// İnceleme döngüseldir: claude'un işini codex, codex'inkini gemini, gemini'ninkini claude inceler.
+{
+  const { db, claude, codex, gemini, done } = await team(["claude", "codex", "gemini"]);
+  for (const a of [claude, codex, gemini]) assert.equal((await next(a)).action, "ANALYZE");
+  await claude.call("post_note", { text: "CLAUDE notu" });
+  await codex.call("post_note", { text: "CODEX notu" });
+  const w = await next(codex);
+  assert.equal(w.action, "WAIT"); assert.match(w.why, /gemini/);
+  const g = await gemini.call("post_note", { text: "GEMINI notu" });
+  assert.equal(g.data.next.action, "WAIT", "ilk söz kaptandan sonraki işçide (codex)");
+  const d1 = await next(codex);
+  assert.equal(d1.action, "DISCUSS"); assert.equal(d1.left, 6);
+  assert.deepEqual(d1.notes.map((n) => n.by), ["claude", "gemini"]);
+  assert.ok((await claude.call("discuss", { thread: d1.thread, stance: "agree", text: "x" })).err, "sıra codex'te");
+  await codex.call("discuss", { thread: d1.thread, stance: "object", text: "gemini notu eksik" });
+  const d2 = await next(gemini);
+  assert.equal(d2.action, "DISCUSS"); assert.deepEqual(d2.notes.map((n) => n.by), ["claude", "codex"]);
+  const a1 = await gemini.call("discuss", { thread: d1.thread, stance: "agree", text: "codex haklı" });
+  assert.equal(a1.data.left, 4, "tek agree üç kişide tartışmayı kapatmaz");
+  const a2 = await claude.call("discuss", { thread: d1.thread, stance: "agree", text: "plana ekliyorum" });
+  assert.equal(a2.data.result, "CLOSED:agreed");
+  assert.equal(a2.data.next.action, "PLAN");
+
+  assert.ok((await claude.call("post_tasks", { tasks: [{ title: "x", assignee: "nobody" }] })).err);
+  const posted = await claude.call("post_tasks", { tasks: [
+    { title: "a", assignee: "claude", touches: ["a/"] }, { title: "b", assignee: "codex", touches: ["b/"] },
+    { title: "c", assignee: "gemini", touches: ["c/"] }, { title: "d", assignee: "gemini", touches: ["d/"] },
+  ] });
+  assert.equal(posted.data.warn, undefined, "2-1-1 dengeli sayılır");
+  assert.equal(posted.data.quota, 2);
+  const p1 = await next(codex);
+  assert.equal(p1.action, "DISCUSS"); assert.equal(p1.kind, "plan");
+  assert.equal((await codex.call("discuss", { thread: p1.thread, stance: "agree", text: "tamam" })).data.next.action, "WAIT", "gemini de onaylamalı");
+  assert.equal((await gemini.call("discuss", { thread: p1.thread, stance: "agree", text: "tamam" })).data.next.id, 3);
+
+  // Mesaj: alıcı yoksa tüm ortaklara, kendine gönderilemez
+  assert.ok((await gemini.call("send_prompt", { text: "x", to: "gemini" })).err);
+  await gemini.call("send_prompt", { text: "c/ bitti sayılır" });
+  assert.deepEqual(db.prepare("SELECT recipient FROM messages ORDER BY id").all().map((r) => r.recipient), ["claude", "codex"]);
+
+  assert.equal((await next(claude)).id, 1);
+  assert.equal((await next(codex)).id, 2);
+  await claude.call("submit_task", { id: 1, summary: "a", files: ["a/x"] });
+  await codex.call("submit_task", { id: 2, summary: "b", files: ["b/x"] });
+  await gemini.call("submit_task", { id: 3, summary: "c", files: ["c/x"] });
+  assert.equal((await gemini.call("submit_task", { id: 4, summary: "d", files: ["d/x"] })).data.next.action, "REVIEW");
+  assert.ok((await gemini.call("review_task", { id: 1, verdict: "approve", comment: "ok" })).err, "#1'in inceleyicisi codex");
+  const reviews = { claude: await next(claude), codex: await next(codex), gemini: await next(gemini) };
+  assert.deepEqual(Object.values(reviews).map((r) => [r.action, r.id]), [["REVIEW", 3], ["REVIEW", 1], ["REVIEW", 2]]);
+  await done();
+}
+
+// Takımda olmayan ajan bekler; görev ona atanamaz. Yarım iş varken takım değişmez (görev sahipsiz kalırdı).
+{
+  const { db, claude, gemini, done } = await team(["claude", "codex"]);
+  const n = await next(gemini);
+  assert.equal(n.action, "WAIT"); assert.match(n.why, /takımda değilsin/);
+  assert.match((await claude.call("assign_task", { id: 1, assignee: "gemini" })).data, /Takımda olmayan/);
+  const trio = ["claude", "codex", "gemini"];
+  assert.equal(teamChangeBlocked(db, trio), false, "boş panoda takım değişebilir");
+  await claude.call("post_note", { text: "açılış notu" });
+  assert.equal(teamChangeBlocked(db, trio), true, "süren açılışta değişmez");
+  assert.equal(teamChangeBlocked(db, ["claude", "codex"]), false, "aynı takım her zaman başlar");
+  setMeta(db, "planned", "1");
+  run(db, "INSERT INTO tasks(title, status, owner) VALUES ('x', 'WORKING', 'codex')");
+  assert.equal(teamChangeBlocked(db, trio), true, "bitmemiş görev varken değişmez");
+  run(db, "UPDATE tasks SET status='DONE'");
+  assert.equal(teamChangeBlocked(db, trio), false, "hepsi bitince değişebilir");
   await done();
 }
 

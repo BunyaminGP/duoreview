@@ -14,8 +14,16 @@
       <select id="project"></select>
     </label>
     <button id="pick" data-i18n-title="pickTitle" data-i18n="pick"></button>
+    <label data-i18n-title="teamTitle"><span data-i18n="team"></span>
+      <select id="teamsel">
+        <option value="claude,codex,gemini">Claude + Codex + Gemini</option>
+        <option value="claude,codex">Claude + Codex</option>
+        <option value="claude,gemini">Claude + Gemini</option>
+        <option value="codex,gemini">Codex + Gemini</option>
+      </select>
+    </label>
     <label><span data-i18n="captain"></span>
-      <select id="captain"><option value="claude">Claude</option><option value="codex">Codex</option></select>
+      <select id="captain"><option value="claude">Claude</option><option value="codex">Codex</option><option value="gemini">Gemini</option></select>
     </label>
     <label><span data-i18n="review"></span>
       <select id="mode">
@@ -45,15 +53,20 @@
         <option value="ozel" data-i18n="profCustom"></option>
       </select>
     </label>
-    <span class="grp"><b>Claude</b>
+    <span class="grp" id="grp-claude"><b>Claude</b>
       <select id="model-claude" class="model" data-i18n-title="modelTitle"></select>
       <input id="model-claude-custom" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off" hidden>
       <select id="effort-claude" data-i18n-title="effortTitle"></select>
     </span>
-    <span class="grp"><b>Codex</b>
+    <span class="grp" id="grp-codex"><b>Codex</b>
       <select id="model-codex" class="model" data-i18n-title="modelTitle"></select>
       <input id="model-codex-custom" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off" hidden>
       <select id="effort-codex" data-i18n-title="effortTitle"></select>
+    </span>
+    <span class="grp" id="grp-gemini"><b>Gemini</b>
+      <select id="model-gemini" class="model" data-i18n-title="modelTitle"></select>
+      <input id="model-gemini-custom" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off" hidden>
+      <select id="effort-gemini" data-i18n-title="effortTitle"></select>
     </span>
     <span class="note" data-i18n="modelsNote"></span>
   </div>
@@ -62,17 +75,23 @@
     <textarea id="brief" rows="2" spellcheck="false"></textarea>
   </div>
   <main>
-    <section class="pane">
+    <section class="pane" id="pane-claude">
       <div class="bar"><span class="dot" id="dot-claude"></span>Claude Code
         <span class="badge" id="role-claude"></span><span class="state" id="state-claude"></span><span class="usage" id="usage-claude"></span>
         <button data-start="claude" data-i18n="start"></button><button data-kill="claude" data-i18n="stop"></button></div>
       <div class="term" id="term-claude"></div>
     </section>
-    <section class="pane">
+    <section class="pane" id="pane-codex">
       <div class="bar"><span class="dot" id="dot-codex"></span>Codex CLI
         <span class="badge" id="role-codex"></span><span class="state" id="state-codex"></span><span class="usage" id="usage-codex"></span>
         <button data-start="codex" data-i18n="start"></button><button data-kill="codex" data-i18n="stop"></button></div>
       <div class="term" id="term-codex"></div>
+    </section>
+    <section class="pane" id="pane-gemini">
+      <div class="bar"><span class="dot" id="dot-gemini"></span>Gemini · Antigravity CLI
+        <span class="badge" id="role-gemini"></span><span class="state" id="state-gemini"></span><span class="usage" id="usage-gemini"></span>
+        <button data-start="gemini" data-i18n="start"></button><button data-kill="gemini" data-i18n="stop"></button></div>
+      <div class="term" id="term-gemini"></div>
     </section>
     <section id="reader" class="reader" hidden>
       <div class="bar"><span data-i18n="tabTalk"></span>

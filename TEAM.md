@@ -1,19 +1,19 @@
-# Takım Protokolü (Claude + Codex)
+# Takım Protokolü (Claude + Codex + Gemini)
 
-Bu projede `duoreview` MCP sunucusu üzerinden bir ortağınla çalışıyorsun. Bu dosya geçerli olduğunda aşağıdaki akışı izle.
+Bu projede `duoreview` MCP sunucusu üzerinden bir ya da iki ortağınla çalışıyorsun (takım ilk cevaptaki kurallarda yazar). Bu dosya geçerli olduğunda aşağıdaki akışı izle.
 
 ## Döngü
 1. Göreve `next_action` ile başla. İlk cevapta rolün, kullanıcının talimatı ve kurallar gelir. Araç cevabında `next` alanı varsa sıradaki adım odur; yoksa `next_action` çağır. `action` ne diyorsa onu yap:
-   - `ANALYZE` → talimatı kendi başına yerine getir (kodu oku, talimat istiyorsa internette araştır) ve bulgularını `post_note` ile yaz. Ortağını bekleme; notlar ikiniz de yazana kadar birbirinizden gizlidir.
-   - `DISCUSS` → gelen notu ve mesajları oku, `discuss(thread, stance, text)` ile yanıtla. `agree` tartışmayı kapatır; `object` gerekçe ister; `propose` yeni öneridir. Mesaj sınırı dolunca uzlaşma yoksa tartışma "ayrışma" olarak kapanır ve kullanıcıya gösterilir.
-   - `PLAN` (kaptan) → iki notu ve tartışmayı birleştir, `post_tasks` ile işleri iki ajana dengeli böl; başka görevin bitmesini bekleyen işe `depends_on` ver. İş çıkmıyorsa `post_tasks(tasks: [])`. Plan da ortağın onayından geçer.
+   - `ANALYZE` → talimatı kendi başına yerine getir (kodu oku, talimat istiyorsa internette araştır) ve bulgularını `post_note` ile yaz. Ortaklarını bekleme; notlar hepiniz yazana kadar birbirinizden gizlidir.
+   - `DISCUSS` → gelen notu ve mesajları oku, `discuss(thread, stance, text)` ile yanıtla. Son öneriyi yazan dışında herkes `agree` deyince tartışma kapanır; söz takım sırasında döner; `object` gerekçe ister; `propose` yeni öneridir. Mesaj sınırı dolunca uzlaşma yoksa tartışma "ayrışma" olarak kapanır ve kullanıcıya gösterilir.
+   - `PLAN` (kaptan) → notları ve tartışmayı birleştir, `post_tasks` ile işleri takımdaki ajanlara dengeli böl; başka görevin bitmesini bekleyen işe `depends_on` ver. İş çıkmıyorsa `post_tasks(tasks: [])`. Plan da ortakların onayından geçer.
    - `FINISH_WORK` → görev sana verildi (tarif cevapta; yeniden okumak için `status(id)`). İşi yap, bitince `submit_task(id, summary, files)`.
-   - `REVIEW` → ortağın görevini incele (aşağıdaki kurallar), `review_task` çağır.
+   - `REVIEW` → sana düşen görevi incele (inceleyici, takım sırasında görevin sahibinden sonraki ajandır; aşağıdaki kurallar), `review_task` çağır.
    - `REWORK` → `fix` içindeki istekleri uygula, tekrar `submit_task`.
-   - `WAIT` → ortağını bekliyorsun. Uygulama seni uyandırır; yoklama yapma.
+   - `WAIT` → ortaklarını bekliyorsun. Uygulama seni uyandırır; yoklama yapma.
    - `ALL_DONE` → `status(detail)` ile kullanıcıya kısa özet ver. `DISPUTE` kalanları ve ayrışmayla kapanan tartışmaları açıkça yaz.
 2. Önce kendi görevlerini bitir, sonra incelemeye geç.
-3. Tasarım kararı belirsizse koda başlamadan `open_thread(topic, text, task)` ile ortağına sor. Bu tartışma işi durdurmaz.
+3. Tasarım kararı belirsizse koda başlamadan `open_thread(topic, text, task)` ile ortaklarına sor. Bu tartışma işi durdurmaz.
 
 Açılış "yalnız kaptan" kipindeyse `ANALYZE` ve açılış tartışması yoktur; kaptan doğrudan `PLAN` alır.
 
@@ -30,4 +30,4 @@ Açılış "yalnız kaptan" kipindeyse `ANALYZE` ve açılış tartışması yok
 - Tartışma: katılmıyorsan söyle ve nedenini göster. Nezaketen onaylama, ortağının yazdığını tekrar etme.
 
 ## Çakışma önlemi
-Aynı dosyayı ortağın görevinde düzenleme. Gerekiyorsa `send_prompt` ile haber ver, `read_inbox` ile oku.
+Başka bir ajanın görevindeki dosyayı düzenleme. Gerekiyorsa `send_prompt` ile haber ver (`to` verilmezse tüm ortaklara gider), `read_inbox` ile oku.

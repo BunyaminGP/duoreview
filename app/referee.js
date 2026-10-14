@@ -5,7 +5,7 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { t } = require("./i18n");
 
-const AGENTS = ["claude", "codex"];
+const AGENTS = ["claude", "codex", "gemini"];
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g;
 // Ekranın sonunda bir onay/güven sorusu varsa Enter'a basmak onu kullanıcı adına onaylamak olur.
 // Çıplak "approve" aranmaz: ajanın kendi review_task(verdict: "approve") çağrısı ekranda görünür ve ajan boşta sanılmazdı.

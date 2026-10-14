@@ -1,9 +1,11 @@
-// Ajan komutlarını ve MCP bağlantısını üretir. Kullanıcının global ayarlarına dokunmaz:
-// Claude'a --mcp-config, Codex'e -c geçersiz kılmaları ile bağlanır.
-// Yürütülebilirler sırayla aranır: ortam değişkeni (…_CLAUDE_BIN / …_CODEX_BIN) → bilinen kurulum yerleri → PATH.
+// Ajan komutlarını ve MCP bağlantısını üretir. Claude'a --mcp-config, Codex'e -c geçersiz kılmaları ile bağlanır;
+// bu ikisinde kullanıcının global ayarlarına dokunulmaz. Gemini (agy) MCP sunucusunu ve araç iznini yalnız global ayardan okur:
+// kayıt ajan başlarken yazılır, kapanınca geri alınır (registerGemini / unregisterGemini).
+// Yürütülebilirler sırayla aranır: ortam değişkeni (…_CLAUDE_BIN / …_CODEX_BIN / …_GEMINI_BIN) → bilinen kurulum yerleri → PATH.
 const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
+const { execFileSync } = require("node:child_process");
 const { t, getLang } = require("./i18n");
 
 const IS_WIN = process.platform === "win32";
@@ -82,6 +84,17 @@ function resolveCodex() {
   throw new Error(t("codexNotFound"));
 }
 
+/** Antigravity CLI (agy). Gemini CLI kişisel hesaplara kapandı; Gemini'ye terminalden bu ulaşıyor. */
+function resolveGemini() {
+  const forced = process.env.DUOREVIEW_GEMINI_BIN;
+  if (forced && isFile(forced)) return forced;
+  // Kurulum PATH'i kullanıcı kaydına yazar; kurulumdan önce açılmış uygulama onu görmez, varsayılan yere de bakılır.
+  const found = onPath(IS_WIN ? ["agy.exe"] : ["agy"]) ||
+    (IS_WIN ? [path.join(process.env.LOCALAPPDATA || "", "agy", "bin", "agy.exe")] : [path.join(os.homedir(), ".local", "bin", "agy")]).find(isFile);
+  if (!found) throw new Error(t("geminiNotFound"));
+  return found;
+}
+
 function serverEntry() {
   // Paketli sürümde asar dışına açılmış olur
   const p = path.join(__dirname, "..", "dist", "server.js");
@@ -125,6 +138,13 @@ function buildSpec(agent, dataDir, opts = {}) {
     return { file: resolveClaude(), args };
   }
 
+  if (agent === "gemini") {
+    const args = [];
+    if (opts.model) args.push("--model", opts.model);
+    if (opts.effort) args.push("--effort", opts.effort);
+    return { file: resolveGemini(), args };
+  }
+
   const toml = (v) => JSON.stringify(v); // JSON dizesi/dizisi geçerli TOML'dur
   const extra = [];
   if (opts.model) extra.push("-m", opts.model);
@@ -144,4 +164,52 @@ function buildSpec(agent, dataDir, opts = {}) {
   };
 }
 
-module.exports = { buildSpec, resolveClaude, resolveCodex };
+// ---- Gemini: global MCP kaydı ve araç izni ---------------------------------
+const AGY_ALLOW = "mcp(duoreview/*)";
+const agyFile = (home, ...p) => path.join(home, ".gemini", ...p);
+let registered = false; // kapanışta yalnız bu oturumun eklediği kayıt geri alınır
+let previous = null; // kullanıcının önceden tanımladığı duoreview kaydı: kapanışta geri yazılır
+let allowAdded = false; // izin kullanıcıda zaten varsa kapanışta silinmez
+
+/** JSON dosyasını okuyup fn ile değiştirir. Dosya okunamıyorsa (ör. elle bozulmuş) dokunmaz; fn false dönerse yazmaz. */
+function editJson(file, fn) {
+  let s = {};
+  if (fs.existsSync(file)) { try { s = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return; } }
+  if (fn(s) === false) return;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(s, null, 2));
+}
+
+function registerGemini(dataDir, home = os.homedir()) {
+  editJson(agyFile(home, "config", "mcp_config.json"), (c) => { previous = c.mcpServers?.duoreview ?? null; return false; });
+  const env = mcpEnv("gemini", dataDir);
+  execFileSync(resolveGemini(), ["mcp", "add", ...Object.entries(env).flatMap(([k, v]) => ["--env", `${k}=${v}`]),
+    "duoreview", fwd(process.execPath), serverEntry()], { stdio: "ignore", timeout: 20_000, windowsHide: true });
+  registered = true;
+  editJson(agyFile(home, "antigravity-cli", "settings.json"), (s) => {
+    const allow = ((s.permissions ??= {}).allow ??= []);
+    if (allow.includes(AGY_ALLOW)) return false;
+    allow.push(AGY_ALLOW);
+    allowAdded = true;
+  });
+}
+
+function unregisterGemini(home = os.homedir()) {
+  if (registered) {
+    registered = false;
+    if (previous) editJson(agyFile(home, "config", "mcp_config.json"), (c) => { (c.mcpServers ??= {}).duoreview = previous; });
+    else try { execFileSync(resolveGemini(), ["mcp", "remove", "duoreview"], { stdio: "ignore", timeout: 20_000, windowsHide: true }); } catch {}
+    previous = null;
+  }
+  if (!allowAdded) return;
+  allowAdded = false;
+  editJson(agyFile(home, "antigravity-cli", "settings.json"), (s) => {
+    const allow = s.permissions?.allow;
+    if (!Array.isArray(allow) || !allow.includes(AGY_ALLOW)) return false;
+    s.permissions.allow = allow.filter((x) => x !== AGY_ALLOW);
+    if (!s.permissions.allow.length) delete s.permissions.allow;
+    if (!Object.keys(s.permissions).length) delete s.permissions;
+  });
+}
+
+module.exports = { buildSpec, resolveClaude, resolveCodex, resolveGemini, registerGemini, unregisterGemini };

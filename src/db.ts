@@ -2,14 +2,12 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-export type Agent = "claude" | "codex";
-export const AGENTS: Agent[] = ["claude", "codex"];
+export type Agent = "claude" | "codex" | "gemini";
+export const AGENTS: Agent[] = ["claude", "codex", "gemini"];
 export const MAX_REVIEW_ROUNDS = 3;
-/** Bir tartışmada en çok kaç mesaj yazılır; dolunca uzlaşma yoksa "ayrışma" olarak kapanır. */
+/** İki kişilik takımda bir tartışmada en çok kaç mesaj yazılır (takım büyüdükçe orantılı artar); dolunca uzlaşma yoksa "ayrışma" olarak kapanır. */
 export const MAX_POSTS = { kickoff: 4, plan: 4, free: 6 } as const;
 export const MAX_OPEN_THREADS = 2;
-
-export const other = (a: Agent): Agent => (a === "claude" ? "codex" : "claude");
 
 /** dataDir: projeden bağımsız veri klasörü (uygulama klasörü). Proje deposuna dosya yazılmaz. */
 export function openDb(dataDir: string) {

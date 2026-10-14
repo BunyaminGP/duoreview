@@ -1,4 +1,4 @@
-const AGENTS = ["claude", "codex"];
+const AGENTS = ["claude", "codex", "gemini"];
 const $ = (id) => document.getElementById(id);
 const { t, setLang, STR } = window.I18N;
 const views = {};
@@ -45,9 +45,9 @@ $("lang").addEventListener("change", () => window.bridge.setLang($("lang").value
 
 // ---- ayarlar ---------------------------------------------------------------
 const PROFILES = {
-  ekonomik: { models: { claude: "sonnet", codex: "" }, efforts: { claude: "low", codex: "low" } },
-  dengeli: { models: { claude: "sonnet", codex: "" }, efforts: { claude: "medium", codex: "medium" } },
-  guclu: { models: { claude: "opus", codex: "" }, efforts: { claude: "high", codex: "high" } },
+  ekonomik: { models: { claude: "sonnet", codex: "", gemini: "" }, efforts: { claude: "low", codex: "low", gemini: "low" } },
+  dengeli: { models: { claude: "sonnet", codex: "", gemini: "" }, efforts: { claude: "medium", codex: "medium", gemini: "medium" } },
+  guclu: { models: { claude: "opus", codex: "", gemini: "" }, efforts: { claude: "high", codex: "high", gemini: "high" } },
 };
 // Model seçimi: tam liste bir <select> içinde durur; listede olmayan ad "elle yaz" ile girilir.
 const CUSTOM = "__custom__";
@@ -75,14 +75,29 @@ function fillModels(a, value) {
   $(`model-${a}-custom`).hidden = true;
 }
 
+const team = () => $("teamsel").value.split(",");
 const currentCfg = () => ({
-  captain: $("captain").value, reviewMode: $("mode").value, kickoff: $("kickoff").value, brief: $("brief").value.trim(),
+  team: team(), captain: $("captain").value, reviewMode: $("mode").value, kickoff: $("kickoff").value, brief: $("brief").value.trim(),
   profile: $("profile").value,
-  models: { claude: modelOf("claude"), codex: modelOf("codex") },
-  efforts: { claude: $("effort-claude").value, codex: $("effort-codex").value },
+  models: Object.fromEntries(AGENTS.map((a) => [a, modelOf(a)])),
+  efforts: Object.fromEntries(AGENTS.map((a) => [a, $("effort-" + a).value])),
 });
 const save = () => window.bridge.saveCfg(currentCfg());
 for (const id of ["captain", "mode", "kickoff", "brief"]) $(id).addEventListener("change", save);
+
+// Takımda olmayan ajanın terminali ve model ayarı gizlenir; kalan terminaller genişler. Kaptan takımdan biri olmalı.
+function applyTeam() {
+  const members = team();
+  for (const a of AGENTS) {
+    $("pane-" + a).hidden = $("grp-" + a).hidden = !members.includes(a);
+    $("captain").querySelector(`option[value="${a}"]`).disabled = !members.includes(a);
+  }
+  if (!members.includes($("captain").value)) $("captain").value = members[0];
+  document.querySelector("main").style.gridTemplateColumns = `repeat(${members.length}, minmax(0, 1fr)) 340px`;
+  for (const a of AGENTS) setRole(a, $("captain").value);
+  requestAnimationFrame(fitAll);
+}
+$("teamsel").addEventListener("change", () => { applyTeam(); save(); });
 
 function applyProfile(name) {
   const p = PROFILES[name];
@@ -124,16 +139,17 @@ window.bridge.onState((s) => {
     o.value = d; o.textContent = d; o.selected = d === s.projectDir;
     return o;
   }));
+  $("teamsel").value = s.cfg.team.join(",");
   $("captain").value = s.cfg.captain;
+  applyTeam();
   $("mode").value = s.cfg.reviewMode;
   $("kickoff").value = s.cfg.kickoff;
   $("brief").value = s.cfg.brief;
   $("profile").value = s.cfg.profile || "dengeli";
   for (const a of AGENTS) { fillModels(a, s.cfg.models?.[a] ?? ""); fillEfforts(a, s.cfg.efforts?.[a] ?? ""); }
-  const lock = ["project", "pick", "captain", "mode", "kickoff", "brief", "reset", "team", "profile"];
+  const lock = ["project", "pick", "teamsel", "captain", "mode", "kickoff", "brief", "reset", "team", "profile"];
   for (const a of AGENTS) lock.push("model-" + a, `model-${a}-custom`, "effort-" + a);
   for (const id of lock) $(id).disabled = isRunning;
-  for (const a of AGENTS) setRole(a, s.cfg.captain);
 });
 
 function setRole(agent, captain) {
@@ -165,7 +181,7 @@ document.querySelectorAll("[data-kill]").forEach((b) =>
 
 $("team").addEventListener("click", () => {
   fitAll();
-  const sizes = Object.fromEntries(AGENTS.map((a) => [a, { cols: views[a].term.cols, rows: views[a].term.rows }]));
+  const sizes = Object.fromEntries(team().map((a) => [a, { cols: views[a].term.cols, rows: views[a].term.rows }]));
   window.bridge.startTeam({ sizes, cfg: currentCfg() });
 });
 
@@ -263,8 +279,14 @@ async function openReader(anchor) {
   };
   const kick = notes.filter((n) => n.kind === "kickoff"), rest = notes.filter((n) => n.kind !== "kickoff");
   const parts = [];
-  // Açılış incelemeleri yan yana: farklar göz gezdirerek görülsün
-  for (let i = 0; i < kick.length; i += 2) { const pair = el("div", "pair"); pair.append(...kick.slice(i, i + 2).map(doc)); parts.push(pair); }
+  // Açılış incelemeleri yan yana (her turda takımdaki ajan sayısı kadar): farklar göz gezdirerek görülsün
+  const per = new Set(kick.map((n) => n.author)).size;
+  for (let i = 0; i < kick.length; i += per) {
+    const pair = el("div", "pair");
+    pair.style.gridTemplateColumns = `repeat(${per}, minmax(0, 1fr))`;
+    pair.append(...kick.slice(i, i + per).map(doc));
+    parts.push(pair);
+  }
   parts.push(...rest.map(doc));
   for (const th of threads) {
     const box = el("div", "thread"); box.id = "thread-" + th.id;

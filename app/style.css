@@ -1,6 +1,6 @@
 :root {
   --bg:#0f1115; --panel:#161a21; --line:#262c36; --text:#d7dce5; --muted:#7d8696;
-  --accent:#6ea8fe; --ok:#4cc38a; --warn:#e5b14a; --bad:#ef6b6b; --orange:#f09a4d;
+  --accent:#6ea8fe; --ok:#4cc38a; --warn:#e5b14a; --bad:#ef6b6b; --orange:#f09a4d; --violet:#b48cf2;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
@@ -75,7 +75,7 @@ ul { list-style: none; margin: 0; padding: 0; }
 .dot.quota { background: var(--bad); }
 .state.quota { color: var(--bad); }
 
-.usage { display: flex; gap: 10px; margin-left: 8px; font-weight: 400; font-size: 11px; color: var(--muted); }
+.usage { display: flex; flex-wrap: wrap; gap: 2px 10px; margin-left: 8px; font-weight: 400; font-size: 11px; color: var(--muted); }
 .meter { display: grid; grid-template-columns: auto 54px auto; align-items: center; gap: 5px; }
 .meter .track { height: 6px; border-radius: 3px; background: #262c36; overflow: hidden; }
 .meter .fill { height: 100%; background: var(--ok); }
@@ -85,7 +85,8 @@ ul { list-style: none; margin: 0; padding: 0; }
 
 /* yerleşim düzeltmeleri: kalabalık ajan çubuğu, taşma */
 html, body { overflow: hidden; }
-main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 340px; }
+main { grid-template-columns: repeat(3, minmax(0, 1fr)) 340px; }
+.pane[hidden], .models .grp[hidden] { display: none; }
 .bar { flex-wrap: wrap; row-gap: 4px; white-space: nowrap; }
 .bar .usage { order: 5; flex-basis: 100%; margin-left: 18px; }
 .models .note { white-space: nowrap; }
@@ -109,10 +110,11 @@ main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 340px; }
 .talk-list li.empty, .talk-list li.head { cursor: default; background: none; }
 .talk-list li.head { padding: 8px 12px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); border: 0; }
 .talk-list .meta { display: flex; gap: 6px; margin-top: 2px; font-size: 11px; color: var(--muted); }
-.who-claude { color: var(--orange); } .who-codex { color: var(--accent); } .who-user, .who-app { color: var(--muted); }
+.who-claude { color: var(--orange); } .who-codex { color: var(--accent); } .who-gemini { color: var(--violet); }
+.who-user, .who-app { color: var(--muted); }
 .o-OPEN { color: var(--warn); } .o-agreed { color: var(--ok); } .o-split { color: var(--bad); } .o-CLOSED { color: var(--muted); }
 
-/* okuma görünümü: iki terminalin üstünü kaplar, yan panel açık kalır */
+/* okuma görünümü: terminallerin üstünü kaplar, yan panel açık kalır */
 main { position: relative; }
 .reader { position: absolute; inset: 0 341px 0 0; z-index: 5; display: flex; flex-direction: column; background: var(--bg); }
 .reader[hidden] { display: none; }
@@ -124,6 +126,7 @@ main { position: relative; }
 .reader-body .text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 78ch; }
 .reader-body .post { margin: 0 0 12px; padding-left: 12px; border-left: 2px solid var(--line); }
 .reader-body .post.claude { border-left-color: var(--orange); } .reader-body .post.codex { border-left-color: var(--accent); }
+.reader-body .post.gemini { border-left-color: var(--violet); }
 .reader-body .by { margin-bottom: 2px; font-size: 12px; color: var(--muted); }
 .reader-body .by b { font-weight: 600; }
 .reader-body .hint { color: var(--bad); font-size: 12px; margin: 0 0 10px; }

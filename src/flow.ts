@@ -1,7 +1,7 @@
 // Takım akışı kuralları. Hem MCP sunucusu hem uygulamadaki hakem bunu kullanır.
 import type { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
-import { AGENTS, MAX_POSTS, other, type Agent } from "./db.js";
+import { AGENTS, MAX_POSTS, type Agent } from "./db.js";
 import { t as tr } from "./i18n.js";
 
 export type Task = {
@@ -36,6 +36,21 @@ export const logEvent = (db: DatabaseSync, actor: string, text: string) =>
   run(db, "INSERT INTO events(actor, text) VALUES (?,?)", actor, text);
 
 export const captainOf = (db: DatabaseSync) => getMeta(db, "captain", "claude") as Agent;
+/** Takımdaki ajanlar (uygulama yazar). Bu anahtarı taşımayan eski panolar Claude + Codex sayılır. */
+export const teamOf = (db: DatabaseSync): Agent[] => {
+  const team = getMeta(db, "team", "").split(",").filter((a): a is Agent => (AGENTS as string[]).includes(a));
+  return team.length >= 2 ? team : ["claude", "codex"];
+};
+export const others = (db: DatabaseSync, me: Agent) => teamOf(db).filter((a) => a !== me);
+/** Bitmemiş görev ya da süren açılış varken takım değişirse görev sahipsiz, açılış eksik kalır: önce bitmeli ya da pano sıfırlanmalı. */
+export const teamChangeBlocked = (db: DatabaseSync, team: string[]) =>
+  team.join(",") !== teamOf(db).join(",") &&
+  !!(one(db, "SELECT id FROM tasks WHERE status<>'DONE'") || (!planned(db) && one(db, "SELECT id FROM notes WHERE kind='kickoff'")));
+/** Görevin inceleyicisi: takım sırasında sahibinden sonraki ajan (iki kişide ortak, üç kişide döngü). */
+export const reviewerOf = (db: DatabaseSync, t: Task): Agent => {
+  const team = teamOf(db);
+  return team[(team.indexOf(t.owner as Agent) + 1) % team.length];
+};
 export const reviewMode = (db: DatabaseSync) => getMeta(db, "review_mode", "after_all") as ReviewMode;
 
 /** joint: plan öncesi iki ajan ayrı ayrı inceler, sonra tartışır. solo: yalnız kaptan planlar. */
@@ -44,7 +59,7 @@ export const kickoffOf = (db: DatabaseSync) => getMeta(db, "kickoff", "solo") as
 export const planned = (db: DatabaseSync) => getMeta(db, "planned", "0") === "1";
 
 export const total = (db: DatabaseSync) => one<{ n: number }>(db, "SELECT COUNT(*) n FROM tasks")!.n;
-export const quota = (db: DatabaseSync) => Math.ceil(total(db) / AGENTS.length);
+export const quota = (db: DatabaseSync) => Math.ceil(total(db) / teamOf(db).length);
 /** Bana atanmış ya da benim üstlendiğim görev sayısı. */
 export const mineCount = (db: DatabaseSync, a: Agent) =>
   one<{ n: number }>(db, "SELECT COUNT(*) n FROM tasks WHERE owner=? OR assignee=?", a, a)!.n;
@@ -93,27 +108,34 @@ export const kickoffNote = (db: DatabaseSync, a: Agent) =>
 export const postsOf = (db: DatabaseSync, threadId: number) =>
   all<Post>(db, "SELECT * FROM posts WHERE thread_id=? ORDER BY id", threadId);
 
-/** Söz sırası: son mesajı yazmayan konuşur. Boş açılış tartışmasında ilk sözü işçi alır (kaptan önce eleştiriyi duyar). */
-export function myTurn(db: DatabaseSync, th: Thread, me: Agent): boolean {
+/** Söz sırası takım sırasında döner; kaptan turun sonunda konuşur. Boş açılış tartışmasında ilk sözü kaptandan sonraki işçi alır (kaptan önce eleştiriyi duyar). */
+export function nextSpeaker(db: DatabaseSync, th: Thread): Agent {
+  const team = teamOf(db);
+  const c = team.indexOf(captainOf(db));
+  const order = [...team.slice(c + 1), ...team.slice(0, c + 1)];
   const last = one<Post>(db, "SELECT * FROM posts WHERE thread_id=? ORDER BY id DESC", th.id);
-  return last ? last.author !== me : me !== captainOf(db);
+  return last ? order[(order.indexOf(last.author) + 1) % order.length] : order[0];
 }
+export const myTurn = (db: DatabaseSync, th: Thread, me: Agent) => nextSpeaker(db, th) === me;
 
 export function openThread(db: DatabaseSync, o: {
   kind: Thread["kind"]; topic: string; by: Agent; taskId?: number; blocking?: boolean; text?: string;
 }): number {
   const id = Number(run(db,
     "INSERT INTO threads(kind, topic, task_id, blocking, opened_by, max_posts) VALUES (?,?,?,?,?,?)",
-    o.kind, o.topic, o.taskId ?? null, o.blocking ? 1 : 0, o.by, MAX_POSTS[o.kind]).lastInsertRowid);
+    o.kind, o.topic, o.taskId ?? null, o.blocking ? 1 : 0, o.by, Math.ceil(MAX_POSTS[o.kind] * teamOf(db).length / 2)).lastInsertRowid);
   if (o.text) run(db, "INSERT INTO posts(thread_id, author, stance, text) VALUES (?,?, 'propose', ?)", id, o.by, o.text);
   return id;
 }
 
-/** Mesajı ekler. "agree" tartışmayı uzlaşmayla, mesaj sınırı ise ayrışmayla kapatır. */
+/** Mesajı ekler. Son mesajı yazan dışında herkes art arda "agree" derse uzlaşmayla, mesaj sınırı dolarsa ayrışmayla kapatır. */
 export function addPost(db: DatabaseSync, th: Thread, me: Agent, stance: Stance, text: string) {
   run(db, "INSERT INTO posts(thread_id, author, stance, text) VALUES (?,?,?,?)", th.id, me, stance, text);
-  const n = postsOf(db, th.id).length;
-  const outcome = stance === "agree" ? "agreed" : n >= th.max_posts ? "split" : null;
+  const posts = postsOf(db, th.id);
+  const need = teamOf(db).length - 1;
+  const agreed = posts.length >= need && posts.slice(-need).every((p) => p.stance === "agree");
+  const n = posts.length;
+  const outcome = agreed ? "agreed" : n >= th.max_posts ? "split" : null;
   run(db, "UPDATE threads SET status=?, outcome=?, updated_at=datetime('now') WHERE id=?", outcome ? "CLOSED" : "OPEN", outcome, th.id);
   return { outcome, left: th.max_posts - n };
 }
@@ -123,13 +145,15 @@ const discuss = (db: DatabaseSync, th: Thread) =>
 
 export function nextAction(db: DatabaseSync, me: Agent): Record<string, any> {
   const captain = captainOf(db);
-  const partner = other(me);
+  if (!teamOf(db).includes(me)) return { action: "WAIT", reason: tr("notInTeam", { team: teamOf(db).join(", ") }) };
+  const replying = (th: Thread) => ({ action: "WAIT", reason: tr("partnerReplying", { partner: nextSpeaker(db, th) }) });
   if (total(db) === 0 && !planned(db)) {
     if (kickoffOf(db) === "joint") {
       if (!kickoffNote(db, me)) return { action: "ANALYZE" };
-      if (!kickoffNote(db, partner)) return { action: "WAIT", reason: tr("partnerAnalyzing", { partner }) };
+      const missing = others(db, me).filter((a) => !kickoffNote(db, a));
+      if (missing.length) return { action: "WAIT", reason: tr("partnerAnalyzing", { partner: missing.join(", ") }) };
       const th = one<Thread>(db, "SELECT * FROM threads WHERE kind='kickoff' AND status='OPEN'");
-      if (th) return myTurn(db, th, me) ? discuss(db, th) : { action: "WAIT", reason: tr("partnerReplying", { partner }) };
+      if (th) return myTurn(db, th, me) ? discuss(db, th) : replying(th);
     }
     return me === captain
       ? { action: "PLAN" }
@@ -147,10 +171,11 @@ export function nextAction(db: DatabaseSync, me: Agent): Record<string, any> {
   const threads = all<Thread>(db, "SELECT * FROM threads WHERE status='OPEN' ORDER BY blocking DESC, id");
   const turn = threads.find((th) => myTurn(db, th, me));
   if (turn) return discuss(db, turn);
-  if (threads.some((th) => th.blocking)) return { action: "WAIT", reason: tr("partnerReplying", { partner }) };
+  const blocking = threads.find((th) => th.blocking);
+  if (blocking) return replying(blocking);
 
   const toReview = reviewPhaseOpen(db)
-    ? one<Task>(db, "SELECT * FROM tasks WHERE status='REVIEW' AND owner<>? ORDER BY id", me)
+    ? all<Task>(db, "SELECT * FROM tasks WHERE status='REVIEW' AND owner<>? ORDER BY id", me).find((t) => reviewerOf(db, t) === me)
     : undefined;
   const reviewAction = toReview && {
     action: "REVIEW", task: toReview,
@@ -172,7 +197,7 @@ export function nextAction(db: DatabaseSync, me: Agent): Record<string, any> {
   }
   const blocked = todo.find((t) => t.assignee === me);
   return { action: "WAIT", waitingOn: open,
-    reason: blocked ? claimable(db, me, blocked) : tr("waitingPartner", { partner: other(me) }) };
+    reason: blocked ? claimable(db, me, blocked) : tr("waitingPartner", { partner: others(db, me).join(", ") }) };
 }
 
 /**
@@ -214,13 +239,13 @@ export function compact(db: DatabaseSync, a: Record<string, any>, delivered: Set
   const t = a.task as (Partial<Task> & { id: number; title: string }) | undefined;
   const once = <T extends { id: number }>(prefix: string, rows: T[]) =>
     rows.filter((r) => !delivered.has(prefix + r.id) && delivered.add(prefix + r.id));
-  /** Ortağın açılış notu ve henüz görmediğim mesajlar (her biri oturumda bir kez). */
+  /** Ortakların açılış notları ve henüz görmediğim mesajlar (her biri oturumda bir kez). */
   const talk = (th: Thread | undefined) => {
     if (!th || !me) return {};
-    const theirs = th.kind === "kickoff" ? kickoffNote(db, other(me)) : undefined;
-    const note = once("n", theirs ? [theirs] : []).map((n) => n.text)[0];
+    const theirs = th.kind === "kickoff" ? others(db, me).map((a) => kickoffNote(db, a)).filter((n): n is Note => !!n) : [];
+    const notes = once("n", theirs).map((n) => ({ by: n.author, text: n.text }));
     const posts = once("p", postsOf(db, th.id).filter((p) => p.author !== me)).map((p) => ({ by: p.author, stance: p.stance, text: p.text }));
-    return { note, posts: posts.length ? posts : undefined };
+    return { notes: notes.length ? notes : undefined, posts: posts.length ? posts : undefined };
   };
   const spec = (id: number) => {
     if (delivered.has(id)) return undefined;
@@ -262,6 +287,7 @@ export function briefing(db: DatabaseSync, me: Agent): string {
   const brief = getMeta(db, "brief", "");
   return [
     tr(me === captain ? "roleCaptain" : "roleWorker", { captain }),
+    tr("teamLine", { team: teamOf(db).join(", ") }),
     brief && tr("briefLine", { brief }),
     tr("loop"),
     tr(kickoffOf(db) === "joint" ? "loopJoint" : "loopSolo"),

@@ -1,11 +1,11 @@
-// Model listesi (Codex önbelleği, yedek liste) ve tartışmaların Markdown dökümü.
+// Model listesi (Codex önbelleği, yedek liste, agy models çıktısı) ve tartışmaların Markdown dökümü.
 import { createRequire } from "node:module";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 const req = createRequire(import.meta.url);
-const { codexModels, CLAUDE_MODELS } = req("../app/models.js");
+const { codexModels, CLAUDE_MODELS, parseAgyModels } = req("../app/models.js");
 const { talkMarkdown } = req("../app/talkmd.js");
 const V = req("../app/validate.js");
 
@@ -52,5 +52,9 @@ assert.equal(md, [
   "## #1 Plan", "_ayrışma_", "",
   "**codex** (itiraz, 2026-10-11 10:05:00)", "", "katılmıyorum", "",
 ].join("\n"));
+
+// agy models: başlık satırı ve geçersiz ad atlanır, Windows satır sonu temizlenir
+assert.deepEqual(parseAgyModels("Fetching available models...\r\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\r\nbad id\tx\r\n").map((m) => [m.id, m.label]),
+  [["gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"]]);
 
 console.log("MODELS OK");
