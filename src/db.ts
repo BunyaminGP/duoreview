@@ -9,6 +9,22 @@ export const MAX_REVIEW_ROUNDS = 3;
 export const MAX_POSTS = { kickoff: 4, plan: 4, free: 6 } as const;
 export const MAX_OPEN_THREADS = 2;
 
+/** Sonradan eklenen sütunlar: eski panolar açılırken eklenir. */
+const COLUMNS = [
+  ["tasks", "depends_on", "TEXT NOT NULL DEFAULT '[]'"],
+  ["tasks", "acceptance", "TEXT NOT NULL DEFAULT '[]'"], // kabul kriterleri; inceleyici her birini kanıtla işaretler
+  ["tasks", "base", "TEXT"],                             // üstlenirken çalışma ağacının git ağacı (diff tabanı)
+  ["tasks", "head", "TEXT"],                             // gönderirken çalışma ağacının git ağacı
+  ["tasks", "diff", "TEXT"],
+  ["tasks", "unclaimed", "TEXT"],                        // hiçbir görevin touches'ında olmayan değişen dosyalar
+  ["tasks", "verify", "TEXT"],                           // son doğrulama komutu sonucu (JSON)
+  ["tasks", "origin", "INTEGER"],                        // benimsenen alternatiften doğduysa o incelemenin id'si
+  ["reviews", "checks", "TEXT"],
+  ["reviews", "alternative", "TEXT"],                    // daha sade/hızlı yol önerisi
+  ["reviews", "triage", "TEXT"],                         // adopted | rejected (kaptanın kararı)
+  ["reviews", "triage_note", "TEXT"],
+] as const;
+
 /** dataDir: projeden bağımsız veri klasörü (uygulama klasörü). Proje deposuna dosya yazılmaz. */
 export function openDb(dataDir: string) {
   mkdirSync(dataDir, { recursive: true });
@@ -86,9 +102,10 @@ export function openDb(dataDir: string) {
   `);
   db.exec("BEGIN IMMEDIATE");
   try {
-    const columns = db.prepare("PRAGMA table_info(tasks)").all();
-    if (!columns.some((c) => c.name === "depends_on")) {
-      db.exec("ALTER TABLE tasks ADD COLUMN depends_on TEXT NOT NULL DEFAULT '[]'");
+    for (const [table, column, def] of COLUMNS) {
+      if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column)) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
+      }
     }
     db.exec("COMMIT");
   } catch (e) { db.exec("ROLLBACK"); db.close(); throw e; }

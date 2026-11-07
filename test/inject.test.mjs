@@ -4,11 +4,13 @@ import assert from "node:assert/strict";
 const { createInjector, SETTLE_MS, CHECK_MS, RETRIES } = createRequire(import.meta.url)("../app/inject.js");
 
 function rig({ alive = true, approval = false } = {}) {
-  const r = { t: 0, out: 0, sent: [], timers: [], alive, approval };
+  const r = { t: 0, out: 0, sent: [], timers: [], alive, approval, generation: 1, pending: false };
   r.inject = createInjector({
     write: (_a, data) => { if (!r.alive) return false; r.sent.push(data); return true; },
     lastOutputAt: () => r.out,
     awaitingApproval: () => r.approval,
+    generation: () => r.generation,
+    inputPending: () => r.pending,
     now: () => r.t,
     later: (fn, ms) => r.timers.push({ at: r.t + ms, fn }),
   });
@@ -44,12 +46,12 @@ function rig({ alive = true, approval = false } = {}) {
   assert.equal(r.sent[0].length, 3000);
 }
 
-// Enter yutulduysa (ajan sessiz) yinelenir, en çok RETRIES kez
+// Sessiz kalan ajan için kanıtsız Enter tekrarı yapılmaz.
 {
   const r = rig();
   r.inject("codex", "kısa");
   r.run(60_000);
-  assert.equal(r.enters(), 1 + RETRIES);
+  assert.equal(r.enters(), 1, "sessizlik ikinci Enter için kanıt değildir");
 }
 
 // Ekranda onay sorusu varken metin ve ilk Enter bile gönderilmez.
@@ -72,11 +74,11 @@ function rig({ alive = true, approval = false } = {}) {
   assert.equal(await delivered, false);
 }
 
-// Teslim ilk başarılı Enter ile tamamlanır; sonradan onay sorusu varsa tekrar yok.
+// Yazım gözlem penceresinde tamamlanır; onay sorusunda tekrar yok.
 {
   const r = rig();
   const delivered = r.inject("codex", "kısa");
-  r.run(SETTLE_MS);
+  r.run(SETTLE_MS + CHECK_MS);
   assert.equal(await delivered, true);
   r.approval = true;
   r.run(60_000);
@@ -100,4 +102,62 @@ function rig({ alive = true, approval = false } = {}) {
   assert.deepEqual(dead.sent, []);
 }
 
+// İptal ve nesil değişimi, eski timer'ı yeni PTY'den ayırır.
+for (const cancel of [false, true]) {
+  const r = rig();
+  const first = r.inject("codex", "eski");
+  assert.equal(r.inject.busy("codex"), true);
+  assert.equal(await r.inject("codex", "çakışma"), false);
+  if (cancel) r.inject.cancel("codex");
+  else r.generation++;
+  r.run(60_000);
+  assert.equal(await first, false);
+  assert.deepEqual(r.sent, ["eski"]);
+  assert.equal(r.inject.busy("codex"), false);
+  const next = r.inject("codex", "yeni");
+  r.run(60_000);
+  assert.equal(await next, true);
+  assert.deepEqual(r.sent, ["eski", "yeni", "\r"]);
+}
+{
+  const r = rig();
+  r.pending = true;
+  const done = r.inject("codex", "girişte kaldığı doğrulandı");
+  r.run(60_000);
+  assert.equal(await done, true);
+  assert.equal(r.enters(), 1 + RETRIES);
+}
+{
+  const r = rig();
+  r.pending = true;
+  const done = r.inject("codex", "iptal");
+  r.run(SETTLE_MS);
+  r.inject.cancel("codex");
+  const replacement = r.inject("codex", "yeni");
+  r.pending = false;
+  r.run(60_000);
+  assert.equal(await done, false);
+  assert.equal(await replacement, true);
+  assert.deepEqual(r.sent, ["iptal", "\r", "yeni", "\r"]);
+}
+{
+  const r = rig();
+  r.pending = true;
+  const done = r.inject("codex", "mesaj");
+  r.run(SETTLE_MS);
+  r.approval = true;
+  r.run(60_000);
+  assert.equal(await done, true);
+  assert.equal(r.enters(), 1, "giriş bekliyor sinyali olsa bile onay ekranında tekrar yok");
+}
+{
+  const r = rig();
+  const first = r.inject("codex", "codex");
+  const other = r.inject("claude", "claude");
+  r.inject.cancel("codex");
+  r.run(60_000);
+  assert.equal(await first, false);
+  assert.equal(await other, true, "bir ajanın iptali diğerini durdurmaz");
+  assert.equal(r.enters(), 1);
+}
 console.log("INJECT OK");

@@ -1,6 +1,7 @@
 // CLI bulma: ortam değişkeniyle verilen yol kullanılır; olmayan yol hata verir. Ajan başlatmaz, kota harcamaz.
 import { createRequire } from "node:module";
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -22,6 +23,17 @@ assert.ok(c.args.includes("--mcp-config") && c.args.includes("mcp__duoreview") &
 const x = agents.buildSpec("codex", join(dir, "data"), { model: "gpt-x", effort: "high" });
 assert.equal(x.file, fakeCodex);
 assert.ok(x.args.some((a) => a.startsWith("mcp_servers.duoreview.command=")) && x.args.includes("gpt-x"));
+// Oturum: yalnız uygulamanın verdiği Claude kimliği sürdürülür; "en son oturum" seçenekleri hiç kullanılmaz
+const sid = "0b6f3c1e-8d2a-4c55-9e1f-2a7b9c4d5e6f";
+assert.ok(!c.args.includes("--resume") && !c.args.includes("--session-id"));
+const fresh = agents.buildSpec("claude", join(dir, "data"), { sessionId: sid }).args;
+assert.deepEqual(fresh.slice(fresh.indexOf("--session-id"), fresh.indexOf("--session-id") + 2), ["--session-id", sid]);
+assert.ok(!fresh.includes("--resume"));
+const resumed = agents.buildSpec("claude", join(dir, "data"), { sessionId: sid, resume: true }).args;
+assert.deepEqual(resumed.slice(resumed.indexOf("--resume"), resumed.indexOf("--resume") + 2), ["--resume", sid]);
+assert.ok(!resumed.includes("--session-id"));
+assert.ok(!resumed.includes("--continue"));
+assert.ok(!agents.buildSpec("codex", join(dir, "data"), { sessionId: sid, resume: true }).args.some((a) => /^(resume|--last|--continue)$/.test(a)));
 
 // Gemini (agy): MCP kaydı ve araç izni global ayara yazılır, kapanınca geri alınır.
 // Sahte agy: node, --require ile çağrıyı kaydeden betiği çalıştırıp çıkar.
@@ -32,6 +44,8 @@ process.env.DUOREVIEW_GEMINI_BIN = process.execPath;
 process.env.NODE_OPTIONS = `--require "${join(dir, "fake-agy.cjs").replace(/\\/g, "/")}"`;
 const g = agents.buildSpec("gemini", join(dir, "data"), { model: "gemini-3.8-flash-high", effort: "low" });
 assert.deepEqual(g, { file: process.execPath, args: ["--model", "gemini-3.8-flash-high", "--effort", "low"] });
+assert.deepEqual(agents.buildSpec("gemini", join(dir, "data"), { model: "gemini-3.8-flash-high", effort: "low", sessionId: sid, resume: true }), g,
+  "Gemini oturum kimliği doğrulanamaz: her zaman yeni oturum");
 
 const home = join(dir, "home"), settings = join(home, ".gemini", "antigravity-cli", "settings.json");
 mkdirSync(join(home, ".gemini", "antigravity-cli"), { recursive: true });
@@ -68,6 +82,20 @@ assert.throws(() => agents.registerGemini(join(dir, "data"), home));
 agents.unregisterGemini(home);
 assert.deepEqual(callLog().slice(n).map((c) => c[0]), ["add"]);
 delete process.env.FAKE_AGY_FAIL;
+// Kayıt durumu diske yazılır; uygulama çökerse sonraki açılış geri alır, çalışan bir oturumun kaydına dokunmaz
+const state = join(dir, "gemini-state.json");
+writeFileSync(settings, "{}");
+n = callLog().length;
+agents.registerGemini(join(dir, "data"), home, { stateFile: state, projectDir: dir });
+assert.ok(callLog().at(-1).includes(`DUOREVIEW_PROJECT=${dir.replace(/\\/g, "/")}`));
+const saved = JSON.parse(readFileSync(state, "utf8"));
+writeFileSync(state, JSON.stringify({ ...saved, pid: process.ppid }));
+assert.equal(agents.recoverGemini(state), false, "canlı sürecin kaydı");
+writeFileSync(state, JSON.stringify({ ...saved, pid: spawnSync(process.execPath, ["-e", ""], { env: {} }).pid }));
+assert.equal(agents.recoverGemini(state), true);
+assert.deepEqual(callLog().slice(n).map((c) => c[0]), ["add", "remove"]);
+assert.deepEqual(read(), {});
+assert.ok(!existsSync(state));
 delete process.env.NODE_OPTIONS;
 
 // Geçersiz yol → yok sayılır, normal aramaya düşer (bulunamazsa anlaşılır hata)

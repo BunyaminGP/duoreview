@@ -73,6 +73,9 @@
   <div class="brief">
     <label for="brief" data-i18n="briefLabel"></label>
     <textarea id="brief" rows="2" spellcheck="false"></textarea>
+    <label for="verify" data-i18n="verifyLabel" data-i18n-title="verifyTitle"></label>
+    <input id="verify" data-i18n-placeholder="verifyPh" data-i18n-title="verifyTitle" spellcheck="false" autocomplete="off">
+    <button id="skills-open" data-i18n-title="skillsTitle" data-i18n="skills"></button>
   </div>
   <main>
     <section class="pane" id="pane-claude">
@@ -80,23 +83,56 @@
         <span class="badge" id="role-claude"></span><span class="state" id="state-claude"></span><span class="usage" id="usage-claude"></span>
         <button data-start="claude" data-i18n="start"></button><button data-kill="claude" data-i18n="stop"></button></div>
       <div class="term" id="term-claude"></div>
+      <div class="composer" id="composer-claude">
+        <textarea id="input-claude" class="composer-input" rows="2" data-i18n-placeholder="composerPh" spellcheck="false"></textarea>
+        <div class="composer-actions">
+          <span class="composer-hint" data-i18n="composerHint"></span>
+          <span class="composer-status" id="composer-status-claude"></span>
+          <button id="send-claude" class="composer-send primary" data-send="claude" data-i18n="send"></button>
+        </div>
+      </div>
     </section>
     <section class="pane" id="pane-codex">
       <div class="bar"><span class="dot" id="dot-codex"></span>Codex CLI
         <span class="badge" id="role-codex"></span><span class="state" id="state-codex"></span><span class="usage" id="usage-codex"></span>
         <button data-start="codex" data-i18n="start"></button><button data-kill="codex" data-i18n="stop"></button></div>
       <div class="term" id="term-codex"></div>
+      <div class="composer" id="composer-codex">
+        <textarea id="input-codex" class="composer-input" rows="2" data-i18n-placeholder="composerPh" spellcheck="false"></textarea>
+        <div class="composer-actions">
+          <span class="composer-hint" data-i18n="composerHint"></span>
+          <span class="composer-status" id="composer-status-codex"></span>
+          <button id="send-codex" class="composer-send primary" data-send="codex" data-i18n="send"></button>
+        </div>
+      </div>
     </section>
     <section class="pane" id="pane-gemini">
       <div class="bar"><span class="dot" id="dot-gemini"></span>Gemini · Antigravity CLI
         <span class="badge" id="role-gemini"></span><span class="state" id="state-gemini"></span><span class="usage" id="usage-gemini"></span>
         <button data-start="gemini" data-i18n="start"></button><button data-kill="gemini" data-i18n="stop"></button></div>
       <div class="term" id="term-gemini"></div>
+      <div class="composer" id="composer-gemini">
+        <textarea id="input-gemini" class="composer-input" rows="2" data-i18n-placeholder="composerPh" spellcheck="false"></textarea>
+        <div class="composer-actions">
+          <span class="composer-hint" data-i18n="composerHint"></span>
+          <span class="composer-status" id="composer-status-gemini"></span>
+          <button id="send-gemini" class="composer-send primary" data-send="gemini" data-i18n="send"></button>
+        </div>
+      </div>
     </section>
     <section id="reader" class="reader" hidden>
       <div class="bar"><span data-i18n="tabTalk"></span>
         <button id="talk-export" data-i18n="exportTalk"></button><button id="reader-close" data-i18n="close"></button></div>
       <div id="reader-body" class="reader-body"></div>
+    </section>
+    <section id="skills" class="reader" hidden>
+      <div class="bar"><span data-i18n="skillsHead"></span>
+        <button id="skills-add" class="primary" data-i18n="skillsAdd"></button><button id="skills-close" data-i18n="close"></button></div>
+      <div class="reader-body">
+        <p class="skills-hint" data-i18n="skillsHint"></p>
+        <p id="skills-msg" class="skills-msg" hidden></p>
+        <ul id="skills-list" class="skills-list"></ul>
+      </div>
     </section>
     <aside class="side">
       <nav class="tabs">
@@ -123,9 +159,14 @@
       </div>
     </aside>
   </main>
+  <div id="context-menu" class="context-menu" hidden>
+    <button id="ctx-copy" data-i18n="copy"></button>
+    <button id="ctx-paste" data-i18n="paste"></button>
+  </div>
   <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
   <script src="i18n.js"></script>
+  <script src="input.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

@@ -1,6 +1,24 @@
 const AGENTS = ["claude", "codex", "gemini"];
 const $ = (id) => document.getElementById(id);
 const { t, setLang, STR } = window.I18N;
+const {
+  handleTerminalKey,
+  createPasteTargetManager,
+  createComposerController,
+  createHoldController,
+  getLifecycleButtonState,
+  formatLifecycleStatus,
+  resetTerminalModes,
+} = window.InputLib || (typeof require !== "undefined" ? require("./input.js") : {});
+
+const readClipboard = async () => {
+  try { return (await window.bridge?.readClipboard?.()) || ""; } catch { return ""; }
+};
+
+const writeClipboard = async (text) => {
+  try { return (await window.bridge?.writeClipboard?.(text)) ?? false; } catch { return false; }
+};
+
 const views = {};
 let isRunning = false;
 
@@ -13,7 +31,158 @@ for (const agent of AGENTS) {
   term.loadAddon(fit);
   term.open($(`term-${agent}`));
   term.onData((data) => window.bridge.write(agent, data));
+
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== "keydown") return true;
+    const hasSelection = term.hasSelection();
+    const selectedText = term.getSelection();
+
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "c" || e.key === "C")) {
+      if (hasSelection) {
+        writeClipboard(selectedText);
+        return false;
+      }
+      return true;
+    }
+
+    const isPaste = (e.ctrlKey && (e.key === "v" || e.key === "V")) ||
+                    (e.shiftKey && (e.key === "Insert" || e.key === "paste"));
+    if (isPaste && !e.altKey) {
+      e.preventDefault();
+      readClipboard().then((clipText) => {
+        const res = handleTerminalKey ? handleTerminalKey(e, { hasSelection: false, clipboardText: clipText }) : { handled: false };
+        if (res.action === "paste") {
+          views[agent].term.paste(res.text);
+        } else if (res.action === "image-passthrough") {
+          window.bridge.write(agent, "\x16");
+        }
+      });
+      return false;
+    }
+    return true;
+  });
+
   views[agent] = { term, fit };
+}
+
+// ---- bağlam menüsü & composer ----------------------------------------------
+let activeTargetAgent = "claude";
+let activeTargetTextarea = null;
+const ctxMenu = $("context-menu");
+const ctxCopy = $("ctx-copy");
+const ctxPaste = $("ctx-paste");
+
+function hideContextMenu() {
+  if (ctxMenu) ctxMenu.hidden = true;
+}
+document.addEventListener("click", hideContextMenu);
+window.addEventListener("blur", hideContextMenu);
+
+const pasteTargetManager = createPasteTargetManager ? createPasteTargetManager({
+  readClipboard,
+  pasteToAgent: async (agent, text) => {
+    if (activeTargetTextarea && activeTargetAgent === agent) {
+      const ta = activeTargetTextarea;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const val = ta.value;
+      ta.value = val.slice(0, start) + text + val.slice(end);
+      ta.selectionStart = ta.selectionEnd = start + text.length;
+      composerControllers[agent]?.setDraft(ta.value);
+    } else {
+      views[agent]?.term.paste(text);
+    }
+  },
+}) : null;
+
+if (ctxCopy) {
+  ctxCopy.addEventListener("click", async () => {
+    hideContextMenu();
+    const sel = activeTargetTextarea
+      ? activeTargetTextarea.value.slice(activeTargetTextarea.selectionStart, activeTargetTextarea.selectionEnd)
+      : (views[activeTargetAgent]?.term.getSelection() || window.getSelection()?.toString() || "");
+    if (sel) await writeClipboard(sel);
+  });
+}
+
+if (ctxPaste) {
+  ctxPaste.addEventListener("click", async () => {
+    hideContextMenu();
+    if (pasteTargetManager) {
+      await pasteTargetManager.triggerPaste(activeTargetAgent);
+    } else {
+      const text = await readClipboard();
+      if (text) views[activeTargetAgent]?.term.paste(text);
+    }
+  });
+}
+
+function openContextMenu(e, agent, textarea = null) {
+  e.preventDefault();
+  activeTargetAgent = agent;
+  activeTargetTextarea = textarea;
+  const hasSel = textarea
+    ? (textarea.selectionStart !== textarea.selectionEnd)
+    : Boolean(views[agent]?.term.hasSelection() || window.getSelection()?.toString());
+  if (ctxCopy) ctxCopy.disabled = !hasSel;
+  if (ctxMenu) {
+    ctxMenu.style.left = `${Math.min(e.clientX, window.innerWidth - 130)}px`;
+    ctxMenu.style.top = `${Math.min(e.clientY, window.innerHeight - 80)}px`;
+    ctxMenu.hidden = false;
+  }
+}
+
+for (const a of AGENTS) {
+  $(`term-${a}`)?.addEventListener("contextmenu", (e) => openContextMenu(e, a, null));
+  $(`input-${a}`)?.addEventListener("contextmenu", (e) => openContextMenu(e, a, $(`input-${a}`)));
+}
+
+const holdCtrl = createHoldController ? createHoldController({
+  setHoldFn: (agent, held) => {
+    if (window.bridge?.hold) {
+      try { window.bridge.hold(agent, held); } catch {}
+    }
+  },
+}) : null;
+
+const composerControllers = {};
+for (const a of AGENTS) {
+  const input = $(`input-${a}`);
+  const sendBtn = $(`send-${a}`);
+  const statusSpan = $(`composer-status-${a}`);
+
+  const ctrl = createComposerController ? createComposerController({
+    agent: a,
+    sendFn: async (agentId, text) => {
+      return await window.bridge.send(agentId, text);
+    },
+    onStateChange: ({ draft, sending, error }) => {
+      if (input && input.value !== draft) input.value = draft;
+      if (sendBtn) sendBtn.disabled = sending;
+      if (statusSpan) statusSpan.textContent = error ? t("sendError", { err: error }) : "";
+    },
+  }) : { send: async () => {}, setDraft: () => {}, isSending: () => false };
+
+  composerControllers[a] = ctrl;
+
+  if (input) {
+    input.addEventListener("focus", () => holdCtrl?.onFocus(a, input.value));
+    input.addEventListener("input", () => {
+      holdCtrl?.onInput(a, input.value, true);
+      ctrl.setDraft(input.value);
+    });
+    input.addEventListener("blur", () => holdCtrl?.onBlur(a));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        ctrl.send();
+      }
+    });
+  }
+
+  if (sendBtn) {
+    sendBtn.addEventListener("click", () => ctrl.send());
+  }
 }
 
 const fitAll = () => {
@@ -78,12 +247,13 @@ function fillModels(a, value) {
 const team = () => $("teamsel").value.split(",");
 const currentCfg = () => ({
   team: team(), captain: $("captain").value, reviewMode: $("mode").value, kickoff: $("kickoff").value, brief: $("brief").value.trim(),
+  verify: $("verify").value.trim(),
   profile: $("profile").value,
   models: Object.fromEntries(AGENTS.map((a) => [a, modelOf(a)])),
   efforts: Object.fromEntries(AGENTS.map((a) => [a, $("effort-" + a).value])),
 });
 const save = () => window.bridge.saveCfg(currentCfg());
-for (const id of ["captain", "mode", "kickoff", "brief"]) $(id).addEventListener("change", save);
+for (const id of ["captain", "mode", "kickoff", "brief", "verify"]) $(id).addEventListener("change", save);
 
 // Takımda olmayan ajanın terminali ve model ayarı gizlenir; kalan terminaller genişler. Kaptan takımdan biri olmalı.
 function applyTeam() {
@@ -145,12 +315,39 @@ window.bridge.onState((s) => {
   $("mode").value = s.cfg.reviewMode;
   $("kickoff").value = s.cfg.kickoff;
   $("brief").value = s.cfg.brief;
+  $("verify").value = s.cfg.verify || "";
   $("profile").value = s.cfg.profile || "dengeli";
   for (const a of AGENTS) { fillModels(a, s.cfg.models?.[a] ?? ""); fillEfforts(a, s.cfg.efforts?.[a] ?? ""); }
-  const lock = ["project", "pick", "teamsel", "captain", "mode", "kickoff", "brief", "reset", "team", "profile"];
+  const lock = ["project", "pick", "teamsel", "captain", "mode", "kickoff", "brief", "verify", "reset", "team", "profile"];
   for (const a of AGENTS) lock.push("model-" + a, `model-${a}-custom`, "effort-" + a);
   for (const id of lock) $(id).disabled = isRunning;
+  if (!$("skills").hidden) window.bridge.listSkills().then(renderSkills); // proje değişmiş olabilir
+  updateLifecycleUI(s);
 });
+
+function updateLifecycleUI(s) {
+  if (!s) return;
+  for (const a of AGENTS) {
+    const life = s.life?.[a];
+    const lifeWhy = s.lifeWhy?.[a];
+    if (!life) continue;
+
+    const btnState = getLifecycleButtonState ? getLifecycleButtonState(life) : { canStart: true, canStop: true, canSend: true };
+    const startBtn = document.querySelector(`[data-start="${a}"]`);
+    const stopBtn = document.querySelector(`[data-kill="${a}"]`);
+    const sendBtn = $(`send-${a}`);
+
+    if (startBtn) startBtn.disabled = !btnState.canStart;
+    if (stopBtn) stopBtn.disabled = !btnState.canStop;
+    if (sendBtn && !composerControllers[a]?.isSending()) sendBtn.disabled = !btnState.canSend;
+
+    if (life === "STOPPING" || life === "FAILED" || life === "EXITED" || life === "STOPPED") {
+      $(`dot-${a}`).className = `dot ${life}`;
+      $(`state-${a}`).className = `state ${life.toLowerCase()}`;
+      $(`state-${a}`).textContent = formatLifecycleStatus ? formatLifecycleStatus(life, lifeWhy, t) : life;
+    }
+  }
+}
 
 function setRole(agent, captain) {
   $(`role-${agent}`).textContent = agent === captain ? t("roleCaptain") : t("roleWorker");
@@ -172,9 +369,10 @@ window.bridge.onExit(({ agent, exitCode }) => {
 
 document.querySelectorAll("[data-start]").forEach((b) =>
   b.addEventListener("click", () => {
-    const { term, fit } = views[b.dataset.start];
+    const a = b.dataset.start;
+    const { term, fit } = views[a];
     fit.fit();
-    window.bridge.start(b.dataset.start, term.cols, term.rows);
+    window.bridge.start(a, term.cols, term.rows);
   }));
 document.querySelectorAll("[data-kill]").forEach((b) =>
   b.addEventListener("click", () => window.bridge.kill(b.dataset.kill)));
@@ -264,10 +462,44 @@ function showTab(talk) {
 $("tab-board").addEventListener("click", () => showTab(false));
 $("tab-talk").addEventListener("click", () => showTab(true));
 $("reader-close").addEventListener("click", () => { $("reader").hidden = true; fitAll(); });
+
+// ---- skill'ler ---------------------------------------------------------------
+function renderSkills(list) {
+  const rows = list.map((s) => {
+    const li = el("li");
+    const where = el("div", "where");
+    where.append(el("span", s.claude ? "" : "off", "Claude · .claude/skills"), el("span", s.agents ? "" : "off", "Codex, Gemini · .agents/skills"));
+    const rm = el("button", "", t("skillsRemove"));
+    rm.addEventListener("click", async () => {
+      if (confirm(t("skillsConfirmRemove", { name: s.name }))) renderSkills(await window.bridge.removeSkill(s.name));
+    });
+    li.append(el("span", "name", s.name), rm, el("span", "desc", s.description), where);
+    return li;
+  });
+  $("skills-list").replaceChildren(...(rows.length ? rows : [el("li", "empty", t("skillsEmpty"))]));
+}
+async function openSkills() {
+  $("reader").hidden = true;
+  $("skills-msg").hidden = true;
+  renderSkills(await window.bridge.listSkills());
+  $("skills").hidden = false;
+}
+$("skills-open").addEventListener("click", openSkills);
+$("skills-close").addEventListener("click", () => { $("skills").hidden = true; fitAll(); });
+$("skills-add").addEventListener("click", async () => {
+  const r = await window.bridge.addSkills();
+  renderSkills(r.list);
+  const lines = [];
+  if (r.added.length) lines.push(t("skillsAdded", { names: r.added.join(", ") }));
+  for (const e of r.errors) lines.push(`${e.name}: ${STR[curLang]["skillsErr_" + e.error] ? t("skillsErr_" + e.error) : e.error}`);
+  $("skills-msg").textContent = lines.join("\n");
+  $("skills-msg").hidden = !lines.length;
+});
 $("talk-export").addEventListener("click", () => window.bridge.exportTalk());
 
 async function openReader(anchor) {
   const { notes, threads } = await window.bridge.talk();
+  $("skills").hidden = true;
   const body = $("reader-body");
   const keep = $("reader").hidden ? 0 : body.scrollTop;
   const doc = (n) => {
@@ -347,6 +579,7 @@ function renderBoard({ tasks, events, agents, usage, meta: counters = {}, notes 
     st.className = `state ${status === "approval" ? "approval" : status === "quota" ? "quota" : ""}`;
     if (status === "quota") st.textContent = t("quotaFullWhy", { why: agents[a].why });
   }
+  updateLifecycleUI(lastState);
 
   const done = tasks.filter((x) => x.status === "DONE").length;
   $("summary").textContent = tasks.length ? t("doneOf", { done, total: tasks.length }) : "";

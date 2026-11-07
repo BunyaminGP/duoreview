@@ -1,33 +1,48 @@
-// Ajanın terminaline metin yazar ve Enter'a basar. Electron'a bağımlı değildir (testlerde sahte saat verilir).
-// Codex TUI'si art arda hızlı gelen karakterleri yapıştırma sayar ve o sırada gelen Enter'ı satır sonu olarak ekler.
-// Sabit bir bekleme uzun metinde yetmez: Enter, yankı durulunca gönderilir ve ajan çalışmaya başlamadıysa yinelenir.
-const SETTLE_MS = 500;      // yankı bu kadar sustuysa metin tamamen işlendi
+// Enter yankı durulunca gider; sonuç yalnız PTY yazımını bildirir.
+const SETTLE_MS = 500;
 const MAX_SETTLE_MS = 8000;
-const CHECK_MS = 1600;      // Enter'dan sonra ajanın çalışmaya başlamasına tanınan süre
+const CHECK_MS = 1600;
 const RETRIES = 2;
 
-function createInjector({ write, lastOutputAt, awaitingApproval, now = Date.now, later = setTimeout }) {
-  return function inject(agent, text) {
-    if (awaitingApproval(agent) || !write(agent, text)) return Promise.resolve(false);
+function createInjector({ write, lastOutputAt, awaitingApproval, generation = () => 0,
+  inputPending = () => false, now = Date.now, later = setTimeout }) {
+  const active = new Map();
+  function inject(agent, text) {
+    if (active.has(agent) || awaitingApproval(agent)) return Promise.resolve(false);
     return new Promise((resolve) => {
-      const started = now();
+      const job = { generation: generation(agent), started: now(), finish };
+      function finish(ok) {
+        if (active.get(agent) === job) active.delete(agent);
+        resolve(ok);
+      }
+      active.set(agent, job);
+      const valid = () => active.get(agent) === job && generation(agent) === job.generation;
+      const send = (data) => {
+        if (!valid() || awaitingApproval(agent)) return false;
+        try { return write(agent, data) !== false; } catch { return false; }
+      };
       const pressEnter = (left) => {
-        if (awaitingApproval(agent) || !write(agent, "\r")) { resolve(false); return; }
-        resolve(true);
+        if (!send("\r")) { finish(false); return; }
         later(() => {
-          // Gönderilen ajan sürekli çıktı üretir (çalışma göstergesi). Sessizlik, Enter'ın yutulduğunu gösterir.
-          const silent = now() - lastOutputAt(agent) >= CHECK_MS / 2;
-          // Ekranda onay sorusu varsa Enter onu kullanıcı adına cevaplar: basılmaz.
-          if (left > 0 && silent && !awaitingApproval(agent)) pressEnter(left - 1);
+          if (!valid()) { finish(false); return; }
+          if (left > 0 && !awaitingApproval(agent) && inputPending(agent, text, job.generation) === true) {
+            pressEnter(left - 1);
+          } else finish(true);
         }, CHECK_MS);
       };
       const settle = () => {
-        if (now() - lastOutputAt(agent) >= SETTLE_MS || now() - started >= MAX_SETTLE_MS) return pressEnter(RETRIES);
-        later(settle, 100);
+        if (!valid()) { finish(false); return; }
+        if (now() - lastOutputAt(agent) >= SETTLE_MS || now() - job.started >= MAX_SETTLE_MS) {
+          pressEnter(RETRIES);
+        } else later(settle, 100);
       };
+      if (!send(text)) { finish(false); return; }
       later(settle, SETTLE_MS);
     });
-  };
+  }
+  inject.cancel = (agent) => active.get(agent)?.finish(false);
+  inject.busy = (agent) => active.has(agent);
+  return inject;
 }
 
 module.exports = { createInjector, SETTLE_MS, MAX_SETTLE_MS, CHECK_MS, RETRIES };

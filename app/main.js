@@ -1,17 +1,20 @@
-const { app, BrowserWindow, ipcMain, dialog, screen } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, screen, clipboard } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const crypto = require("node:crypto");
 const { pathToFileURL } = require("node:url");
 const pty = require("node-pty");
-const { buildSpec, resolveGemini, registerGemini, unregisterGemini } = require("./agents");
+const { buildSpec, resolveGemini, registerGemini, unregisterGemini, recoverGemini } = require("./agents");
 const { protocol } = require("./protocol");
 const { describeSpawnError } = require("./errtext");
 const { createReferee } = require("./referee");
 const usageLib = require("./usage");
 const { createInjector } = require("./inject");
+const { execFile } = require("node:child_process");
+const { createLifecycle, createPasteTracker, createInputGate, MAX_MESSAGE } = require("./lifecycle");
 const { CLAUDE_MODELS, codexModels, geminiModels } = require("./models");
 const { talkMarkdown } = require("./talkmd");
+const skills = require("./skills");
 const I18N = require("./i18n");
 const V = require("./validate");
 const { t } = I18N;
@@ -22,17 +25,20 @@ const DEFAULT_CFG = {
   reviewMode: "after_all",
   kickoff: "joint",
   profile: "dengeli",
+  verify: "",
   models: { claude: "sonnet", codex: "", gemini: "" },     // "" = ajanın kendi varsayılanı
   efforts: { claude: "medium", codex: "medium", gemini: "medium" },
 };
 const geminiPath = () => { try { return resolveGemini(); } catch { return null; } };
 // Takım kaydedilmemişse agy kuruluysa üçlü, değilse eski ikili
 const defaultTeam = () => (geminiPath() ? ["claude", "codex", "gemini"] : ["claude", "codex"]);
+const geminiStateFile = () => path.join(app.getPath("userData"), "gemini-registration.json");
 const FAKE = !!process.env.DUOREVIEW_FAKE; // gerçek ajan yerine cmd.exe (hakem denemeleri için)
 
-const terms = {}; // agent -> pty
 const pendingInitial = {}; // agent -> henüz teslim edilmemiş protokol metni
 const lastData = {}; // agent -> terminalden gelen son çıktının zamanı
+const sessions = {}; // agent -> uygulamanın bu çalıştırmada açtığı oturum kimliği (yalnız Claude)
+let teamStarted = false; // tekil yeniden başlatmada protokol yeniden gönderilsin
 let win, projectDir, db, dbmod, flow, srvI18n, referee;
 
 // ---- dil -------------------------------------------------------------------
@@ -68,7 +74,8 @@ function patchSettings(fn) {
 function dataDirFor(dir) {
   dir = path.normalize(dir); // C:/x ve C:\x aynı klasör sayılsın
   const slug = path.basename(dir).replace(/[^\w.-]+/g, "_") || "proje";
-  const hash = crypto.createHash("sha1").update(dir.toLowerCase()).digest("hex").slice(0, 8);
+  const key = process.platform === "win32" ? dir.toLowerCase() : dir; // yalnız Windows'ta büyük/küçük harf aynı klasör
+  const hash = crypto.createHash("sha1").update(key).digest("hex").slice(0, 8);
   return path.join(app.getPath("userData"), "projects", `${slug}-${hash}`);
 }
 
@@ -81,15 +88,27 @@ const cleanEnv = () =>
   Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDECODE|CLAUDE_CODE_)/.test(k)));
 
 const send = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
-const running = () => Object.keys(terms);
+const running = () => life.active();
+
+function whyText(agent) {
+  const w = life.why(agent);
+  if (!w) return "";
+  return w.error ? describeSpawnError(agent, w.error).summary : t(w.key, w);
+}
 
 function stateSnapshot() {
   const s = loadSettings();
-  return { projectDir, recents: s.recents ?? [], cfg: cfgFor(projectDir), running: running(), fake: FAKE, lang: I18N.getLang() };
+  return {
+    projectDir, recents: s.recents ?? [], cfg: cfgFor(projectDir), running: running(), fake: FAKE, lang: I18N.getLang(),
+    life: Object.fromEntries(V.AGENTS.map((a) => [a, life.life(a)])),
+    lifeWhy: Object.fromEntries(V.AGENTS.map((a) => [a, whyText(a)])),
+  };
 }
 
 function setProject(dir) {
   projectDir = dir;
+  for (const a of Object.keys(sessions)) delete sessions[a];
+  teamStarted = false;
   patchSettings((s) => { s.projectDir = dir; s.recents = [dir, ...(s.recents ?? []).filter((d) => d !== dir)].slice(0, 8); });
   openProjectDb();
   send("state", stateSnapshot());
@@ -97,44 +116,106 @@ function setProject(dir) {
 }
 
 // ---- ajanlar -------------------------------------------------------------
-function startAgent(agent, cols = 100, rows = 30) {
-  if (terms[agent]) return;
-  let term;
-  try {
+// Yeniden başlayan süreç eski TUI'nin açık bıraktığı ekran/fare/yapıştırma kiplerini devralmasın; geçmiş ekranda kalır.
+const RESET_MODES = "\x1b[?1049l\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h";
+const RESUME_FAIL_MS = 10_000; // sürdürülen oturum bu süre dolmadan hata ile kapanırsa bir kez yeni oturum açılır
+const paste = Object.fromEntries(V.AGENTS.map((a) => [a, createPasteTracker()]));
+const note = (agent, text) => send("pty:data", { agent, data: `\r\n\x1b[90m[${text}]\x1b[0m\r\n` });
+
+const alive = (pid) => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
+function killTree(pid) {
+  if (process.platform === "win32") execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, () => {});
+  else try { process.kill(-pid, "SIGKILL"); } catch { process.kill(pid, "SIGKILL"); }
+}
+
+const life = createLifecycle({
+  agents: V.AGENTS, killTree, alive,
+  spawn: (agent, { cols, rows, sessionId, resume }) => {
     const cfg = cfgFor(projectDir);
     const spec = FAKE ? { file: process.platform === "win32" ? "cmd.exe" : process.env.SHELL || "/bin/sh", args: [] }
-      : buildSpec(agent, dataDirFor(projectDir), { model: cfg.models[agent], effort: cfg.efforts[agent] });
-    if (agent === "gemini" && !FAKE) registerGemini(dataDirFor(projectDir));
-    term = pty.spawn(spec.file, spec.args, {
-      name: "xterm-256color", cols, rows, cwd: projectDir, env: cleanEnv(),
-    });
-  } catch (e) {
-    if (agent === "gemini" && !FAKE) unregisterGemini();
-    const { summary, terminalText } = describeSpawnError(agent, e);
-    send("pty:data", { agent, data: terminalText });
-    flow.logEvent(db, "app", summary);
-    referee.stop(agent);
-    return;
-  }
-  terms[agent] = term;
-  referee.start(agent);
-  // Takım başlatılırken bu ajan açılamadıysa, sonradan "Başlat" ile açıldığında protokol yine gider.
-  if (pendingInitial[agent]) { referee.queueInitial(agent, pendingInitial[agent]); delete pendingInitial[agent]; }
-  term.onData((data) => { lastData[agent] = Date.now(); referee.noteOutput(agent, data); send("pty:data", { agent, data }); });
-  term.onExit(({ exitCode }) => {
-    delete terms[agent];
+      : buildSpec(agent, dataDirFor(projectDir), { model: cfg.models[agent], effort: cfg.efforts[agent], projectDir, sessionId, resume });
+    try {
+      if (agent === "gemini" && !FAKE) registerGemini(dataDirFor(projectDir), undefined, { projectDir, stateFile: geminiStateFile() });
+      return pty.spawn(spec.file, spec.args, { name: "xterm-256color", cols, rows, cwd: projectDir, env: cleanEnv() });
+    } catch (e) {
+      if (agent === "gemini" && !FAKE) unregisterGemini();
+      throw e;
+    }
+  },
+  onData: (agent, data) => {
+    lastData[agent] = Date.now();
+    paste[agent].feed(data);
+    referee.noteOutput(agent, data);
+    send("pty:data", { agent, data });
+  },
+  onExit: (agent, { exitCode, userStop, startedAt, opts }) => {
     if (agent === "gemini" && !FAKE) unregisterGemini();
     referee.stop(agent);
     send("pty:exit", { agent, exitCode });
-    send("state", stateSnapshot());
-  });
-  send("state", stateSnapshot());
+    if (userStop) return;
+    if (exitCode !== 0) flow.logEvent(db, "app", `${agent}: ${t("lifeExit", { code: exitCode })}`);
+    // Sürdürülecek oturum bulunamadıysa CLI hemen kapanır: bir kez yeni oturumla açılır
+    if (opts.resume && exitCode !== 0 && Date.now() - startedAt < RESUME_FAIL_MS) {
+      note(agent, t("termResumeFailed"));
+      queueProtocol(agent);
+      startAgent(agent, opts.cols, opts.rows);
+    }
+  },
+  onChange: () => send("state", stateSnapshot()),
+});
+
+// Takım çalışırken tek başına yeniden açılan ajana protokol yeniden gider
+function queueProtocol(agent) {
+  const team = flow.teamOf(db);
+  if (teamStarted && team.includes(agent)) pendingInitial[agent] = protocol(agent, team);
+}
+
+// resume: panelden yeniden başlatma. Yalnız uygulamanın bu çalıştırmada açtığı Claude oturumu sürdürülür;
+// Codex ve Gemini her zaman yeni oturumla açılır (doğrulanmış oturum kimliği yok).
+function startAgent(agent, cols = 100, rows = 30, resume = false) {
+  const own = agent === "claude" && !FAKE;
+  resume = own && resume && !!sessions[agent];
+  const sessionId = own ? (resume ? sessions[agent] : crypto.randomUUID()) : undefined;
+  const r = life.start(agent, { cols, rows, sessionId, resume });
+  if (!r.ok) {
+    if (r.error instanceof Error) {
+      const { summary, terminalText } = describeSpawnError(agent, r.error);
+      send("pty:data", { agent, data: terminalText });
+      flow.logEvent(db, "app", summary);
+      referee.stop(agent);
+    } else if (r.error !== "running") note(agent, t(r.error));
+    return;
+  }
+  if (own) sessions[agent] = sessionId;
+  paste[agent].reset();
+  if (r.gen > 1) {
+    send("pty:data", { agent, data: RESET_MODES });
+    note(agent, t(resume ? "termResume" : "termNewSession"));
+  }
+  referee.start(agent);
+  // Takım başlatılırken bu ajan açılamadıysa, sonradan "Başlat" ile açıldığında protokol yine gider.
+  if (pendingInitial[agent]) { referee.queueInitial(agent, pendingInitial[agent]); delete pendingInitial[agent]; }
 }
 
 const inject = createInjector({
-  write: (agent, data) => { if (!terms[agent]) return false; terms[agent].write(data); return true; },
+  write: (agent, data) => { const term = life.current(agent); if (!term) return false; term.write(data); return true; },
+  generation: (agent) => life.generation(agent),
   lastOutputAt: (agent) => lastData[agent] ?? 0,
   awaitingApproval: (agent) => referee.awaitingApproval(agent),
+});
+
+// Mesaj alanı doluyken hakem o ajana yazmaz. Kullanıcı ayrılırsa takım durmasın: son tuştan 60 sn sonra kilit kalkar.
+const HOLD_IDLE_MS = 60_000;
+const holds = Object.fromEntries(V.AGENTS.map((a) => [a, { user: false, sending: false, timer: null }]));
+const applyHold = (agent) => referee.hold(agent, holds[agent].user || holds[agent].sending);
+
+const gate = createInputGate({
+  isAgent: V.isAgent, inject,
+  current: (agent) => life.current(agent),
+  awaitingApproval: (agent) => referee.awaitingApproval(agent),
+  noteInput: (agent) => referee.noteInput(agent),
+  bracketed: (agent) => paste[agent].on,
+  setHold: (agent, held) => { holds[agent].sending = held; applyHold(agent); },
 });
 
 // ---- pano ----------------------------------------------------------------
@@ -202,6 +283,7 @@ ipcMain.handle("project:set", (_e, dir) => {
 });
 ipcMain.handle("board:reset", () => {
   if (running().length) return false;
+  teamStarted = false;
   for (const t of ["tasks", "reviews", "messages", "events", "meta", "notes", "threads", "posts"]) db.exec(`DELETE FROM ${t}`);
   db.exec("DELETE FROM sqlite_sequence");
   send("board", board());
@@ -238,16 +320,56 @@ ipcMain.handle("talk:export", async () => {
   fs.writeFileSync(r.filePath, talkMarkdown(flow.discussion(db), { title: t("exportTitle"), labels: talkLabels() }));
   return true;
 });
+// Skill'ler proje klasörüne yazılır; çalışan ajan yeni skill'i yeniden başlayınca görür.
+ipcMain.handle("skills:list", () => skills.list(projectDir));
+ipcMain.handle("skills:add", async () => {
+  const r = await dialog.showOpenDialog(win, { properties: ["openDirectory", "multiSelections"], title: t("skillsPick") });
+  const res = { added: [], errors: [] };
+  if (!r.canceled) {
+    for (const src of r.filePaths) {
+      try { const x = skills.add(projectDir, src); res.added.push(...x.added); res.errors.push(...x.errors); }
+      catch (e) { res.errors.push({ name: path.basename(src), error: e.message }); }
+    }
+  }
+  return { ...res, list: skills.list(projectDir) };
+});
+ipcMain.handle("skills:remove", (_e, name) => {
+  try { skills.remove(projectDir, name); } catch (e) { console.error("skills", e); }
+  return skills.list(projectDir);
+});
 ipcMain.on("cfg:save", (_e, cfg) => patchSettings((s) => { s.byProject = { ...s.byProject, [projectDir]: V.sanitizeCfg(cfg) }; }));
-ipcMain.on("pty:start", (_e, { agent, cols, rows } = {}) => { if (V.isAgent(agent)) startAgent(agent, V.dim(cols, 100), V.dim(rows, 30)); });
+ipcMain.on("pty:start", (_e, { agent, cols, rows } = {}) => {
+  if (!V.isAgent(agent)) return;
+  queueProtocol(agent);
+  startAgent(agent, V.dim(cols, 100), V.dim(rows, 30), true);
+});
 ipcMain.on("pty:write", (_e, { agent, data } = {}) => {
-  if (!V.isAgent(agent) || typeof data !== "string" || data.length > 100_000) return;
-  referee.noteInput(agent); terms[agent]?.write(data);
+  const r = gate.write(agent, data);
+  if (r.error === "sendTermLong") note(agent, t(r.error, { max: MAX_MESSAGE }));
 });
 ipcMain.on("pty:resize", (_e, { agent, cols, rows } = {}) => {
-  if (V.isAgent(agent) && V.dim(cols, 0) && V.dim(rows, 0)) terms[agent]?.resize(cols, rows);
+  if (V.isAgent(agent) && V.dim(cols, 0) && V.dim(rows, 0)) life.current(agent)?.resize(cols, rows);
 });
-ipcMain.on("pty:kill", (_e, { agent } = {}) => { if (V.isAgent(agent)) terms[agent]?.kill(); });
+ipcMain.on("pty:kill", (_e, { agent } = {}) => {
+  if (!V.isAgent(agent)) return;
+  inject.cancel(agent);
+  life.stop(agent);
+});
+// Kullanıcının mesajı terminale veri olarak gider (bracketed paste); pano ya da tuş taklidi kullanılmaz.
+ipcMain.handle("agent:send", async (_e, { agent, text } = {}) => {
+  const r = await gate.send(agent, text);
+  return r.ok ? r : { ok: false, error: t(r.error, { max: MAX_MESSAGE }) };
+});
+ipcMain.on("agent:hold", (_e, { agent, held } = {}) => {
+  if (!V.isAgent(agent)) return;
+  const h = holds[agent];
+  clearTimeout(h.timer);
+  h.user = !!held;
+  h.timer = h.user ? setTimeout(() => { h.user = false; applyHold(agent); }, HOLD_IDLE_MS) : null;
+  applyHold(agent);
+});
+ipcMain.handle("clip:read", () => clipboard.readText());
+ipcMain.on("clip:write", (_e, text) => { if (typeof text === "string") clipboard.writeText(text); });
 
 process.on("uncaughtException", (e) => console.error("uncaught", e));
 
@@ -265,6 +387,7 @@ ipcMain.on("team:start", (_e, payload = {}) => {
   flow.setMeta(db, "captain", cfg.captain);
   flow.setMeta(db, "review_mode", cfg.reviewMode);
   flow.setMeta(db, "kickoff", cfg.kickoff);
+  flow.setMeta(db, "verify", cfg.verify);
   if (restart) {
     db.exec("UPDATE notes SET kind='note' WHERE kind='kickoff'");
     db.exec("UPDATE threads SET status='CLOSED', outcome=COALESCE(outcome,'split') WHERE status='OPEN'");
@@ -274,6 +397,7 @@ ipcMain.on("team:start", (_e, payload = {}) => {
   flow.logEvent(db, "app", t("evTeamStarted", { team: cfg.team.join(", "), captain: cfg.captain, mode: t(cfg.reviewMode === "immediate" ? "evModeImmediate" : "evModeAfterAll"), kickoff: t(cfg.kickoff === "joint" ? "kickoffJoint" : "kickoffSolo") }));
   const resume = db.prepare("SELECT COUNT(*) n FROM tasks").get().n > 0;
   if (resume) flow.logEvent(db, "app", t("evResume"));
+  teamStarted = true;
   for (const a of cfg.team) {
     pendingInitial[a] = protocol(a, cfg.team);
     startAgent(a, V.dim(sizes[a]?.cols, 100), V.dim(sizes[a]?.rows, 30));
@@ -296,6 +420,7 @@ function migrateOldData() {
 
 app.whenReady().then(async () => {
   migrateOldData();
+  if (!FAKE) try { recoverGemini(geminiStateFile()); } catch (e) { console.error("gemini", e); }
   dbmod = await import(pathToFileURL(path.join(distDir, "db.js")).href);
   flow = await import(pathToFileURL(path.join(distDir, "flow.js")).href);
   srvI18n = await import(pathToFileURL(path.join(distDir, "i18n.js")).href);
@@ -321,8 +446,8 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (terms.gemini && !FAKE) unregisterGemini();
-  Object.values(terms).forEach((t) => t.kill());
+  if (life.active().includes("gemini") && !FAKE) unregisterGemini();
+  life.killAll();
   try { db?.close(); } catch {}
   app.quit();
 });

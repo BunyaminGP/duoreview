@@ -1,6 +1,15 @@
 # Changelog
 
 ## 0.1.0 — unreleased
+- Evidence-based review: the server snapshots the working tree when a task is taken and submitted; the reviewer gets the task's own diff plus the files changed outside its `touches`.
+- Acceptance criteria per task; the reviewer marks each with evidence and cannot approve with an unmet one.
+- `alternative` in `review_task` and the captain's `triage` step: a simpler or faster way proposed in review becomes a task or is rejected with a reason.
+- Optional verify command run on `submit_task` (setting in the app); Codex's MCP tool timeout raised for it.
+- Fix: a task waiting in review no longer lets a partner start an overlapping task, and `after_all` review does not wait for such a task.
+- Fix: dependencies inside one `post_tasks` call (`key`); before, only existing ids worked and splitting the plan skipped the plan approval.
+- Fix: `read_inbox` could mark as read a message that arrived between reading and marking. The `status` header is translated. Gemini's global registration is cleaned up after a crash.
+- `bench/swebench.mjs`: headless SWE-bench runner (single agent vs team), official evaluation in Docker, comparison report.
+- Skills panel: adds a skill folder to the project's `.claude/skills` and `.agents/skills` (Codex and agy read the latter) and lists or removes them. The header wraps instead of pushing "Start team" off narrow screens.
 - Shared task board over MCP for Claude Code and Codex: captain/worker roles, cross-review, dispute → user decides.
 - Electron app: two terminals, board, referee, usage meters, dispute panel.
 - English and Turkish UI, prompts and tool texts.

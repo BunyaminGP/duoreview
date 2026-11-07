@@ -2,12 +2,18 @@
 import type { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
 import { AGENTS, MAX_POSTS, type Agent } from "./db.js";
+import { projectDir } from "./git.js";
 import { t as tr } from "./i18n.js";
 
 export type Task = {
   id: number; title: string; description: string; status: string;
   assignee: Agent | null; owner: Agent | null; touches: string; summary: string | null;
-  files: string | null; rounds: number; updated_at: string; depends_on: string;
+  files: string | null; rounds: number; updated_at: string; depends_on: string; acceptance: string;
+  base: string | null; head: string | null; diff: string | null; unclaimed: string | null; verify: string | null; origin: number | null;
+};
+export type Review = {
+  id: number; task_id: number; reviewer: string; verdict: string; comment: string;
+  checks: string | null; alternative: string | null; triage: string | null; triage_note: string | null;
 };
 export type ReviewMode = "after_all" | "immediate";
 export type Kickoff = "solo" | "joint";
@@ -64,31 +70,39 @@ export const quota = (db: DatabaseSync) => Math.ceil(total(db) / teamOf(db).leng
 export const mineCount = (db: DatabaseSync, a: Agent) =>
   one<{ n: number }>(db, "SELECT COUNT(*) n FROM tasks WHERE owner=? OR assignee=?", a, a)!.n;
 
-const norm = (p: string) => {
-  const absolute = resolve(p.replace(/\\/g, "/")).replace(/\\/g, "/").replace(/\/+$/, "");
+/** Proje klasörüne göre mutlak, karşılaştırılabilir yol (Windows'ta küçük harf). */
+export const norm = (p: string) => {
+  const absolute = resolve(projectDir(), p.replace(/\\/g, "/")).replace(/\\/g, "/").replace(/\/+$/, "");
   return process.platform === "win32" ? absolute.toLowerCase() : absolute;
 };
-const parse = (s: string): string[] => { try { return JSON.parse(s).map(norm); } catch { return []; } };
-const overlaps = (a: string[], b: string[]) =>
+export const parsePaths = (s: string | null): string[] => { try { return JSON.parse(s ?? "[]").map(norm); } catch { return []; } };
+export const overlaps = (a: string[], b: string[]) =>
   a.some((x) => b.some((y) => x === y || x.startsWith(y + "/") || y.startsWith(x + "/")));
 
-/** Bu görevle aynı dosyalara dokunan, ortakta yarım kalmış bir görev varsa onu döndürür. */
+/** Bitmemiş işler. İncelemede bekleyen de sayılır: dosyalarını başkası değiştirirse inceleyici karışık değişiklik görür. */
+export const ACTIVE = "('WORKING','REWORK','REVIEW')";
+
+/** Bu görevle aynı dosyalara dokunan, ortakta bitmemiş bir görev varsa onu döndürür. */
 export function conflictingTask(db: DatabaseSync, task: Task, me: Agent): Task | undefined {
-  const mine = parse(task.touches);
+  const mine = parsePaths(task.touches);
   if (!mine.length) return undefined;
-  return all<Task>(db, "SELECT * FROM tasks WHERE status IN ('WORKING','REWORK') AND owner IS NOT NULL AND owner<>? AND id<>?", me, task.id)
-    .find((t) => overlaps(mine, parse(t.touches)));
+  return all<Task>(db, `SELECT * FROM tasks WHERE status IN ${ACTIVE} AND owner IS NOT NULL AND owner<>? AND id<>?`, me, task.id)
+    .find((t) => overlaps(mine, parsePaths(t.touches)));
 }
 
 export const pendingDependencies = (db: DatabaseSync, task: Task): number[] =>
   (JSON.parse(task.depends_on) as number[]).filter((id) =>
     one<{ status: string }>(db, "SELECT status FROM tasks WHERE id=?", id)?.status !== "DONE");
 
-/** Bağımlı işler öncüllerin incelemesini beklerken inceleme kapısını açık tutar. */
+/**
+ * after_all kipinde inceleme, başlanabilecek iş kalmayınca açılır. Öncülünü ya da aynı dosyadaki incelemeyi bekleyen iş
+ * kapıyı kapalı tutmaz: o inceleme bitmeden başlayamaz, kapı kapalı kalırsa ikisi birbirini bekler.
+ */
 export const reviewPhaseOpen = (db: DatabaseSync) =>
   reviewMode(db) === "immediate" ||
   (one<{ n: number }>(db, "SELECT COUNT(*) n FROM tasks WHERE status='WORKING'")!.n === 0 &&
-    !all<Task>(db, "SELECT * FROM tasks WHERE status='TODO'").some((t) => !pendingDependencies(db, t).length));
+    !all<Task>(db, "SELECT * FROM tasks WHERE status='TODO'").some((t) =>
+      !pendingDependencies(db, t).length && !conflictingTask(db, t, t.assignee ?? ("" as Agent))));
 
 export function claimable(db: DatabaseSync, me: Agent, t: Task): string | null {
   if (t.status !== "TODO") return tr("notTodo");
@@ -192,6 +206,12 @@ export function nextAction(db: DatabaseSync, me: Agent): Record<string, any> {
 
   const open = all<Task>(db, "SELECT id,status,owner,assignee FROM tasks WHERE status NOT IN ('DONE','DISPUTE')");
   if (!open.length) {
+    const alternatives = pendingAlternatives(db);
+    if (alternatives.length) {
+      return me === captain
+        ? { action: "TRIAGE", items: alternatives, key: alternatives.map((r) => r.id).join(",") }
+        : { action: "WAIT", reason: tr("captainTriage", { captain }) };
+    }
     const disputes = all<Task>(db, "SELECT id,title FROM tasks WHERE status='DISPUTE'");
     return { action: "ALL_DONE", disputes };
   }
@@ -199,6 +219,11 @@ export function nextAction(db: DatabaseSync, me: Agent): Record<string, any> {
   return { action: "WAIT", waitingOn: open,
     reason: blocked ? claimable(db, me, blocked) : tr("waitingPartner", { partner: others(db, me).join(", ") }) };
 }
+
+/** İnceleyicilerin önerdiği, kaptanın henüz karara bağlamadığı alternatifler (yalnız onaylanmış görevlerde). */
+export const pendingAlternatives = (db: DatabaseSync) => all<Review & { title: string; owner: string }>(db,
+  `SELECT r.*, t.title, t.owner FROM reviews r JOIN tasks t ON t.id=r.task_id
+   WHERE r.alternative IS NOT NULL AND r.triage IS NULL AND t.status='DONE' ORDER BY r.id`);
 
 /**
  * İhtilaf (DISPUTE) son durak olmamalı: karar kullanıcıya aittir.
@@ -247,21 +272,22 @@ export function compact(db: DatabaseSync, a: Record<string, any>, delivered: Set
     const posts = once("p", postsOf(db, th.id).filter((p) => p.author !== me)).map((p) => ({ by: p.author, stance: p.stance, text: p.text }));
     return { notes: notes.length ? notes : undefined, posts: posts.length ? posts : undefined };
   };
+  /** Görev tarifi ve kabul kriterleri, oturumda bir kez. */
   const spec = (id: number) => {
-    if (delivered.has(id)) return undefined;
+    if (delivered.has(id)) return {};
     delivered.add(id);
-    return one<{ description: string }>(db, "SELECT description FROM tasks WHERE id=?", id)?.description || undefined;
+    const row = one<{ description: string; acceptance: string }>(db, "SELECT description, acceptance FROM tasks WHERE id=?", id);
+    const acceptance = JSON.parse(row?.acceptance ?? "[]") as string[];
+    return { spec: row?.description || undefined, acceptance: acceptance.length ? acceptance : undefined };
   };
   switch (a.action) {
     case "WAIT": return { action: "WAIT", why: a.reason };
     case "CLAIM": return { action: "CLAIM", id: t!.id, title: t!.title };
-    case "FINISH_WORK": return { action: "FINISH_WORK", id: t!.id, title: t!.title, spec: spec(t!.id) };
-    case "REWORK": return { action: "REWORK", id: t!.id, title: t!.title, fix: a.reviewerComment, spec: spec(t!.id) };
-    case "REVIEW": {
-      const full = one<Task>(db, "SELECT * FROM tasks WHERE id=?", t!.id)!;
-      let files: string[] = []; try { files = JSON.parse(full.files ?? "[]"); } catch {}
-      return { action: "REVIEW", id: full.id, title: full.title, by: full.owner, summary: full.summary, files, spec: spec(full.id) };
-    }
+    case "FINISH_WORK": return { action: "FINISH_WORK", id: t!.id, title: t!.title, ...spec(t!.id) };
+    case "REWORK": return { action: "REWORK", id: t!.id, title: t!.title, fix: a.reviewerComment, ...spec(t!.id) };
+    case "REVIEW": return { action: "REVIEW", ...reviewPacket(db, t!.id), ...spec(t!.id) };
+    case "TRIAGE": return { action: "TRIAGE",
+      items: (a.items as ReturnType<typeof pendingAlternatives>).map((r) => ({ review: r.id, task: r.task_id, title: r.title, owner: r.owner, by: r.reviewer, text: r.alternative })) };
     case "ALL_DONE": return { action: "ALL_DONE", disputes: (a.disputes ?? []).map((d: any) => d.id) };
     case "ANALYZE": return { action: "ANALYZE" };
     case "DISCUSS": {
@@ -275,6 +301,22 @@ export function compact(db: DatabaseSync, a: Record<string, any>, delivered: Set
     }
     default: return { action: a.action };
   }
+}
+
+export const DIFF_LIMIT = 12000;
+/** İnceleyiciye giden kanıt: görevin kendi diff'i (üstlenme ile gönderim arası), doğrulama sonucu, sahipsiz değişiklikler. */
+export function reviewPacket(db: DatabaseSync, id: number) {
+  const t = one<Task>(db, "SELECT * FROM tasks WHERE id=?", id)!;
+  let files: string[] = []; try { files = JSON.parse(t.files ?? "[]"); } catch {}
+  const diff = t.diff ?? "";
+  const unclaimed = JSON.parse(t.unclaimed ?? "[]") as string[];
+  return {
+    id: t.id, title: t.title, by: t.owner, summary: t.summary, files,
+    diff: diff ? diff.slice(0, DIFF_LIMIT) : undefined,
+    truncated: diff.length > DIFF_LIMIT ? `git diff ${t.base} ${t.head}` : undefined,
+    unclaimed: unclaimed.length ? unclaimed : undefined,
+    verify: t.verify ? JSON.parse(t.verify) : undefined,
+  };
 }
 
 /** Hakemin tekrar dürtmeyi karar vermesi için durum imzası. */

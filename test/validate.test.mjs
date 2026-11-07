@@ -20,15 +20,19 @@ assert.equal(V.isDir(join(dir, "yok")), false);
 for (const bad of [null, undefined, 5, {}, "x".repeat(2000)]) assert.equal(V.isDir(bad), false);
 rmSync(dir, { recursive: true, force: true });
 
-const ok = V.sanitizeCfg({ team: ["gemini", "codex", "claude"], captain: "codex", reviewMode: "immediate", kickoff: "solo", profile: "guclu", brief: "iş", models: { claude: "opus", codex: " gpt-5-codex ", gemini: "gemini-3.8-flash-high" }, efforts: { claude: "high", codex: "low", gemini: "max" } });
-assert.deepEqual(ok, { team: ["claude", "codex", "gemini"], captain: "codex", reviewMode: "immediate", kickoff: "solo", profile: "guclu", brief: "iş", models: { claude: "opus", codex: "gpt-5-codex", gemini: "gemini-3.8-flash-high" }, efforts: { claude: "high", codex: "low", gemini: "max" } });
+const ok = V.sanitizeCfg({ team: ["gemini", "codex", "claude"], captain: "codex", reviewMode: "immediate", kickoff: "solo", profile: "guclu", brief: "iş", verify: " npm test ", models: { claude: "opus", codex: " gpt-5-codex ", gemini: "gemini-3.8-flash-high" }, efforts: { claude: "high", codex: "low", gemini: "max" } });
+assert.deepEqual(ok, { team: ["claude", "codex", "gemini"], captain: "codex", reviewMode: "immediate", kickoff: "solo", profile: "guclu", brief: "iş", verify: "npm test", models: { claude: "opus", codex: "gpt-5-codex", gemini: "gemini-3.8-flash-high" }, efforts: { claude: "high", codex: "low", gemini: "max" } });
 // Kaptan takımdan biri olmalı; tek kişilik ya da bozuk takım eski ikiliye düşer
 assert.deepEqual(V.sanitizeCfg({ team: ["codex", "gemini"], captain: "claude" }).captain, "codex");
 for (const bad of [["gemini"], ["gemini", "root"], "claude,codex", null]) assert.deepEqual(V.sanitizeCfg({ team: bad }).team, ["claude", "codex"]);
 
 const evil = V.sanitizeCfg({ captain: "root", reviewMode: "x", profile: "?", brief: "a".repeat(9000), models: { claude: "x; rm -rf /", codex: "$(calc)" }, efforts: { claude: "turbo", codex: 5 } });
 assert.equal(evil.captain, "claude"); assert.equal(evil.reviewMode, "after_all"); assert.equal(evil.profile, "dengeli"); assert.equal(evil.kickoff, "joint");
-assert.equal(evil.brief.length, 4000);
+assert.equal(evil.brief.length, 9000);
+const longBrief = "İş 🧪\r\nçok satır\t".repeat(3000);
+assert.equal(V.sanitizeCfg({ brief: longBrief }).brief, longBrief);
+assert.equal(evil.verify, "");
+assert.equal(V.sanitizeCfg({ verify: "x".repeat(5000) }).verify.length, 1000);
 assert.deepEqual(evil.models, { claude: "", codex: "", gemini: "" }, "model adında kabuk karakterleri olamaz");
 assert.deepEqual(evil.efforts, { claude: "", codex: "", gemini: "" });
 for (const junk of [null, undefined, 3, "x", []]) assert.equal(V.sanitizeCfg(junk).captain, "claude");

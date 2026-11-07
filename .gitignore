@@ -5,3 +5,6 @@ dist
 izle.ps1
 *.log
 .DS_Store
+bench/work
+.agy-quota
+.codex-quota

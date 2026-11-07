@@ -7,7 +7,7 @@ html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
   font: 13px/1.4 "Segoe UI", system-ui, sans-serif; }
 body { display: flex; flex-direction: column; }
 
-header { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 12px;
   background: var(--panel); border-bottom: 1px solid var(--line); }
 header label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
 .brand { margin-right: 6px; }
@@ -17,13 +17,14 @@ select, textarea, button { background: #202632; color: var(--text); border: 1px 
 select { padding: 4px 6px; max-width: 360px; }
 button { padding: 4px 10px; cursor: pointer; }
 button:hover:not(:disabled), select:hover:not(:disabled) { border-color: var(--accent); }
-button:disabled, select:disabled, textarea:disabled { opacity: .5; cursor: not-allowed; }
+button:disabled, select:disabled, textarea:disabled, input:disabled { opacity: .5; cursor: not-allowed; }
 button.primary { background: var(--accent); color: #0b1220; border-color: var(--accent); font-weight: 600; }
 
 .brief { display: flex; align-items: flex-start; gap: 10px; padding: 6px 12px;
   background: var(--panel); border-bottom: 1px solid var(--line); }
 .brief label { color: var(--muted); padding-top: 5px; white-space: nowrap; }
 .brief textarea { flex: 1; padding: 5px 8px; resize: vertical; min-height: 34px; max-height: 120px; }
+.brief input { width: 220px; padding: 6px 8px; background: #202632; color: var(--text); border: 1px solid var(--line); border-radius: 4px; }
 
 main { flex: 1; display: grid; grid-template-columns: 1fr 1fr 340px; gap: 1px; background: var(--line); min-height: 0; }
 .pane { display: flex; flex-direction: column; background: var(--bg); min-width: 0; min-height: 0; }
@@ -131,5 +132,42 @@ main { position: relative; }
 .reader-body .by b { font-weight: 600; }
 .reader-body .hint { color: var(--bad); font-size: 12px; margin: 0 0 10px; }
 .reader-body .empty { padding: 20px 0; }
+.skills-hint { color: var(--muted); font-size: 13px; max-width: 78ch; }
+.skills-msg { font-size: 13px; color: var(--warn); white-space: pre-wrap; }
+.skills-msg[hidden] { display: none; }
+.skills-list li { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.skills-list .name { font-weight: 600; }
+.skills-list .desc { grid-column: 1; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.brief #skills-open { padding: 5px 12px; }
+.skills-list .where { grid-column: 1; display: flex; gap: 16px; font-size: 11px; color: var(--muted); }
+.skills-list .where .off { opacity: .45; text-decoration: line-through; }
+.skills-list button { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
 
 :root { color-scheme: dark; }
+
+/* composer (mesaj alanı) */
+.composer { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; background: var(--panel); border-top: 1px solid var(--line); }
+.composer-input { width: 100%; min-height: 40px; max-height: 120px; resize: vertical; padding: 6px 8px; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; background: #202632; color: var(--text); border: 1px solid var(--line); border-radius: 4px; }
+.composer-input:focus { border-color: var(--accent); outline: none; }
+.composer-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.composer-hint { font-size: 11px; color: var(--muted); }
+.composer-status { font-size: 11px; color: var(--bad); flex: 1; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-send { padding: 3px 12px; font-size: 12px; }
+
+/* bağlam menüsü */
+.context-menu { position: fixed; z-index: 100; display: flex; flex-direction: column; background: #202632; border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); padding: 4px; min-width: 120px; }
+.context-menu[hidden] { display: none; }
+.context-menu button { background: none; border: 0; text-align: left; padding: 6px 10px; font-size: 12px; color: var(--text); border-radius: 4px; cursor: pointer; }
+.context-menu button:hover:not(:disabled) { background: var(--accent); color: #0b1220; }
+.context-menu button:disabled { opacity: .4; cursor: not-allowed; }
+
+/* yaşam döngüsü durumları */
+.dot.RUNNING { background: var(--ok); }
+.dot.STOPPING { background: var(--warn); }
+.dot.STOPPED { background: var(--muted); }
+.dot.EXITED { background: var(--orange); }
+.dot.FAILED { background: var(--bad); }
+.state.stopping { color: var(--warn); }
+.state.failed { color: var(--bad); }
+.state.exited { color: var(--orange); }
+

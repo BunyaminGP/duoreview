@@ -30,7 +30,7 @@ async function createReferee({ distDir, getDb, write, blocked = () => null, now 
   const st = Object.fromEntries(AGENTS.map((a) => [a, fresh()]));
 
   function fresh() {
-    return { running: false, sending: false, startedAt: 0, lastOutput: 0, tail: "", initial: null, nudge: { sig: "", at: 0, count: 0 }, status: "off", flow: "", why: "", quotaLogged: false };
+    return { running: false, sending: false, held: false, prompt: { id: null, at: 0, count: 0 }, startedAt: 0, lastOutput: 0, tail: "", initial: null, nudge: { sig: "", at: 0, count: 0 }, status: "off", flow: "", why: "", quotaLogged: false };
   }
 
   const api = {
@@ -43,7 +43,8 @@ async function createReferee({ distDir, getDb, write, blocked = () => null, now 
       s.tail = (s.tail + data.replace(ANSI, "")).slice(-700);
     },
     // Kullanıcı terminale bir şey yazdıysa (ör. onay sorusunu cevapladıysa) eski ekran metni geçersizdir.
-    noteInput(agent) { st[agent].tail = ""; },
+    noteInput(agent) { st[agent].tail = ""; st[agent].lastOutput = now(); },
+    hold(agent, held = true) { st[agent].held = held; },
     awaitingApproval(agent) { return APPROVAL.test(st[agent].tail); },
     statuses() {
       return Object.fromEntries(AGENTS.map((a) => [a, { status: st[a].status, flow: st[a].flow, why: st[a].why }]));
@@ -54,7 +55,7 @@ async function createReferee({ distDir, getDb, write, blocked = () => null, now 
       for (const agent of AGENTS) {
         const s = st[agent];
         if (!s.running) { s.status = "off"; continue; }
-        if (s.sending) { s.status = "busy"; continue; }
+        if (s.sending || s.held) { s.status = "busy"; continue; }
         const quiet = now() - s.lastOutput >= idleMs && now() - s.startedAt >= minStartMs;
         s.status = !quiet ? "busy" : APPROVAL.test(s.tail) ? "approval" : "idle";
 
@@ -92,9 +93,15 @@ async function createReferee({ distDir, getDb, write, blocked = () => null, now 
 
         const msg = db.prepare("SELECT id, sender, text FROM messages WHERE recipient=? AND kind='prompt' AND read=0 ORDER BY id LIMIT 1").get(agent);
         if (msg) {
-          say(t("promptFrom", { sender: msg.sender, text: msg.text }), t("evPromptDelivered", { sender: msg.sender }),
-            () => db.prepare("UPDATE messages SET read=1 WHERE id=?").run(msg.id));
-          continue;
+          if (s.prompt.id !== msg.id) s.prompt = { id: msg.id, at: 0, count: 0 };
+          const p = s.prompt;
+          if (p.count < MAX_SAME_NUDGES && (!p.count || now() - p.at >= COOLDOWN_MS)) {
+            p.count++; p.at = now();
+            say(t("promptFrom", { sender: msg.sender, text: "read_inbox" }), "read_inbox");
+            continue;
+          }
+        } else {
+          s.prompt = { id: null, at: 0, count: 0 };
         }
 
         if (!na || na.action === "WAIT" || na.action === "ALL_DONE") { s.nudge = { sig: "", at: 0, count: 0 }; continue; }

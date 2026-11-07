@@ -73,9 +73,12 @@ assert.equal((await claude.call("submit_task", { id: 1, summary: "hutbe", files:
 assert.ok((await codex.call("review_task", { id: 1, verdict: "approve", comment: "ok" })).err, "inceleme erken açılmamalı");
 await claude.call("submit_task", { id: 6, summary: "link", files: ["linking/a"] });
 
-// Çakışma kalktı → codex #4'ü alır ve bitirir; claude bu sırada bekler
-assert.equal(await act(claude), "WAIT");
-assert.equal((await codex.call("next_action")).data.id, 4);
+// #4, incelemede bekleyen #2 ile aynı dosyada: #2 onaylanana dek başlanamaz ve inceleme kapısını kapalı tutmaz
+assert.equal(await act(claude), "REVIEW");
+assert.ok((await codex.call("claim_task", { id: 4 })).err, "incelemedeki görevin dosyasına dokunulamaz");
+const a2 = (await codex.call("review_task", { id: 2, verdict: "approve", comment: "iyi" })).data;
+assert.deepEqual([a2.next.action, a2.next.id], ["FINISH_WORK", 4]);
+assert.equal(await act(claude), "WAIT", "codex çalışırken after_all incelemesi bekler");
 await codex.call("submit_task", { id: 4, summary: "kart", files: ["App.js"] });
 
 // --- Çapraz inceleme aşaması ---
@@ -178,6 +181,19 @@ const ev = all(adminDb, "SELECT actor, text FROM events ORDER BY id");
 assert.ok(ev.length >= 15 && ev.some((e) => /prompt gönderdi/.test(e.text)));
 
 console.log("E2E OK (", ev.length, "olay )");
+// Üç gerçek MCP bağlantısında yalnız hedef özgün veriyi tüketir.
+setMeta(adminDb, "team", "claude,codex,gemini");
+const gemini = await connect("gemini");
+const original = "Türkçe İıŞş 🧪\r\n  satır iki\n\tDo you want to?";
+assert.ok(!(await claude.call("send_prompt", { to: "gemini", text: original })).err);
+assert.deepEqual((await codex.call("read_inbox")).data, []);
+assert.deepEqual((await claude.call("read_inbox")).data, []);
+await gemini.close();
+const restartedGemini = await connect("gemini");
+assert.deepEqual((await restartedGemini.call("read_inbox")).data, [{ sender: "claude", text: original }]);
+assert.deepEqual((await restartedGemini.call("read_inbox")).data, []);
+await restartedGemini.close();
+
 await claude.close(); await codex.close();
 adminDb.close();
 rmSync(dir, { recursive: true, force: true });

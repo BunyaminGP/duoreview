@@ -80,15 +80,17 @@ assert.equal(rev.length, 2);
 assert.match(rev[0][1], /REVIEW #2/);   // claude codex'in işini inceler
 assert.match(rev[1][1], /REVIEW #1/);
 
-// send_prompt: ortağın terminaline teslim edilir ve okundu işaretlenir
+// send_prompt: terminal yalnız bildirim alır, mesajı MCP tüketir.
 run(db, "INSERT INTO messages(sender, recipient, kind, text) VALUES ('claude','codex','prompt',?)", "App.js hook'unu kontrol et");
 advance(6000); ref.tick();
 const pr = take();
-assert.deepEqual(pr, [["codex", "[claude ajanından prompt] App.js hook'unu kontrol et"]]);
+assert.deepEqual(pr, [["codex", "[claude ajanından prompt] read_inbox"]]);
 advance(6000); ref.tick();
 assert.ok(!take().some(([, x]) => x.includes("prompt]")), "prompt ikinci kez teslim edilmemeli");
 
 // Çıkan ajan durdurulursa artık yazılmaz
+assert.equal(db.prepare("SELECT read FROM messages ORDER BY id LIMIT 1").get().read, 0);
+run(db, "UPDATE messages SET read=1");
 ref.stop("codex");
 advance(200_000); ref.tick();
 assert.ok(take().every(([a]) => a !== "codex"));
@@ -112,10 +114,11 @@ console.log("REFEREE OK (", ev.length, "olay )");
   assert.equal(writes, 1);
   complete(false); await Promise.resolve();
   assert.equal(read(), 0, "başarısız teslim yeniden denenebilir");
-  advance(6000); delayed.tick();
+  advance(100000); delayed.tick();
   assert.equal(writes, 2);
   complete(true); await Promise.resolve();
-  assert.equal(read(), 1);
+  assert.equal(read(), 0, "PTY yazımı MCP tüketimi değildir");
+  run(db, "UPDATE messages SET read=1");
 
   delayed.queueInitial("codex", "başlangıç");
   advance(6000); delayed.tick();
@@ -194,9 +197,39 @@ db.close(); rmSync(dir, { recursive: true, force: true });
     .run("Do you want to keep (y/n)? › 1. Yes, and trust this folder");
   t3 += 10_000; ref3.tick();
   assert.equal(out.length, 1);
-  assert.match(out[0][1], /keep/);
+  assert.match(out[0][1], /read_inbox/);
+  assert.ok(!out[0][1].includes("keep"));
   ref3.noteInput("codex"); ref3.noteOutput("codex", out[0][1]);
   assert.equal(ref3.awaitingApproval("codex"), false, "hakemin kendi yazdığı metin onay sorusu değildir");
   console.log("AÇILIŞ MENÜLERİ OK");
   db3.close(); rmSync(dir3, { recursive: true, force: true });
+}
+
+// Açık kullanıcı kilidi başka ajanın bildirimini engellemez; restart mesajı tüketmez.
+{
+  const dir = mkdtempSync(join(tmpdir(), "ref-hold-"));
+  const db = openDb(dir);
+  setMeta(db, "team", "claude,codex,gemini");
+  setMeta(db, "planned", "1");
+  let time = 0;
+  const sent = [];
+  const ref = await createReferee({ distDir: resolve("dist"), getDb: () => db,
+    now: () => time, write: (a, text) => { sent.push([a, text]); return true; } });
+  for (const a of ["codex", "gemini"]) {
+    run(db, "INSERT INTO messages(sender,recipient,kind,text) VALUES ('claude',?,'prompt',?)", a, "Özgün\n🧪 do you want to");
+    ref.start(a);
+  }
+  ref.hold("codex"); time += 6000; ref.tick();
+  assert.deepEqual(sent.map(([a]) => a), ["gemini"]);
+  ref.hold("codex", false); ref.noteInput("codex"); ref.tick();
+  assert.equal(sent.length, 1, "manuel girişten hemen sonra yazılmaz");
+  time += 6000; ref.tick();
+  assert.deepEqual(sent.map(([a]) => a), ["gemini", "codex"]);
+  for (let i = 0; i < 10; i++) { time += 100000; ref.tick(); }
+  assert.equal(sent.filter(([a]) => a === "codex").length, 3);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM messages WHERE read=0").get().n, 2);
+  ref.stop("codex"); ref.start("codex"); time += 6000; ref.tick();
+  assert.equal(sent.filter(([a]) => a === "codex").length, 4);
+  assert.equal(db.prepare("SELECT text FROM messages WHERE recipient='codex'").get().text, "Özgün\n🧪 do you want to");
+  db.close(); rmSync(dir, { recursive: true, force: true });
 }

@@ -101,16 +101,19 @@ function serverEntry() {
   return fwd(p.replace("app.asar", "app.asar.unpacked"));
 }
 
-function mcpEnv(agent, dataDir) {
-  return { ELECTRON_RUN_AS_NODE: "1", AGENT_ID: agent, DUOREVIEW_DIR: fwd(dataDir), DUOREVIEW_LANG: getLang() };
+// DUOREVIEW_PROJECT: görev diff'i ve doğrulama komutu bu klasörde çalışır (MCP sunucusunun cwd'si her CLI'da aynı değil).
+function mcpEnv(agent, dataDir, projectDir) {
+  const env = { ELECTRON_RUN_AS_NODE: "1", AGENT_ID: agent, DUOREVIEW_DIR: fwd(dataDir), DUOREVIEW_LANG: getLang() };
+  if (projectDir) env.DUOREVIEW_PROJECT = fwd(projectDir);
+  return env;
 }
 
 // projectDir: ajanın çalışma klasörü. dataDir: köprü verisi (projenin DIŞINDA; proje deposu kirlenmez).
-// opts: { model, effort } — boş bırakılırsa ajanın kendi varsayılanı (kullanıcının mevcut ayarı) geçerlidir.
+// opts: { model, effort, projectDir } — model/effort boşsa ajanın kendi varsayılanı (kullanıcının mevcut ayarı) geçerlidir.
 function buildSpec(agent, dataDir, opts = {}) {
   const exec = fwd(process.execPath);
   const entry = serverEntry();
-  const env = mcpEnv(agent, dataDir);
+  const env = mcpEnv(agent, dataDir, opts.projectDir);
 
   if (agent === "claude") {
     fs.mkdirSync(dataDir, { recursive: true });
@@ -122,6 +125,8 @@ function buildSpec(agent, dataDir, opts = {}) {
     const args = ["--mcp-config", cfg, "--allowedTools", "mcp__duoreview"];
     if (opts.model) args.push("--model", opts.model);
     if (opts.effort) args.push("--effort", opts.effort);
+    // Oturum kimliğini uygulama verir: yeniden başlatmada yalnız kendi açtığı oturum sürdürülür (--continue başka oturumu alabilir).
+    if (opts.sessionId) args.push(opts.resume ? "--resume" : "--session-id", opts.sessionId);
 
     // Kalan kullanım için: yalnız bu oturuma özel durum çubuğu komutu (global ayara dokunmaz).
     try {
@@ -159,6 +164,8 @@ function buildSpec(agent, dataDir, opts = {}) {
       "-c", `mcp_servers.duoreview.args=${toml([entry])}`,
       "-c", `mcp_servers.duoreview.env=${envToml}`,
       "-c", `mcp_servers.duoreview.default_tools_approval_mode="approve"`,
+      // submit_task doğrulama komutunu çalıştırırken Codex'in 60 sn'lik varsayılan araç süresi yetmez
+      "-c", "mcp_servers.duoreview.tool_timeout_sec=1800",
       ...extra,
     ],
   };
@@ -170,6 +177,8 @@ const agyFile = (home, ...p) => path.join(home, ".gemini", ...p);
 let registered = false; // kapanışta yalnız bu oturumun eklediği kayıt geri alınır
 let previous = null; // kullanıcının önceden tanımladığı duoreview kaydı: kapanışta geri yazılır
 let allowAdded = false; // izin kullanıcıda zaten varsa kapanışta silinmez
+let stateFile = null; // kayıt durumu diskte: uygulama çökerse sonraki açılışta recoverGemini geri alır
+const saveState = (home) => { if (stateFile) fs.writeFileSync(stateFile, JSON.stringify({ previous, allowAdded, home, pid: process.pid })); };
 
 /** JSON dosyasını okuyup fn ile değiştirir. Dosya okunamıyorsa (ör. elle bozulmuş) dokunmaz; fn false dönerse yazmaz. */
 function editJson(file, fn) {
@@ -180,21 +189,26 @@ function editJson(file, fn) {
   fs.writeFileSync(file, JSON.stringify(s, null, 2));
 }
 
-function registerGemini(dataDir, home = os.homedir()) {
+/** opts: { projectDir, stateFile } */
+function registerGemini(dataDir, home = os.homedir(), opts = {}) {
+  stateFile = opts.stateFile ?? null;
   editJson(agyFile(home, "config", "mcp_config.json"), (c) => { previous = c.mcpServers?.duoreview ?? null; return false; });
-  const env = mcpEnv("gemini", dataDir);
+  const env = mcpEnv("gemini", dataDir, opts.projectDir);
   execFileSync(resolveGemini(), ["mcp", "add", ...Object.entries(env).flatMap(([k, v]) => ["--env", `${k}=${v}`]),
     "duoreview", fwd(process.execPath), serverEntry()], { stdio: "ignore", timeout: 20_000, windowsHide: true });
   registered = true;
+  saveState(home);
   editJson(agyFile(home, "antigravity-cli", "settings.json"), (s) => {
     const allow = ((s.permissions ??= {}).allow ??= []);
     if (allow.includes(AGY_ALLOW)) return false;
     allow.push(AGY_ALLOW);
     allowAdded = true;
   });
+  saveState(home);
 }
 
 function unregisterGemini(home = os.homedir()) {
+  if (stateFile) { fs.rmSync(stateFile, { force: true }); stateFile = null; }
   if (registered) {
     registered = false;
     if (previous) editJson(agyFile(home, "config", "mcp_config.json"), (c) => { (c.mcpServers ??= {}).duoreview = previous; });
@@ -212,4 +226,15 @@ function unregisterGemini(home = os.homedir()) {
   });
 }
 
-module.exports = { buildSpec, resolveClaude, resolveCodex, resolveGemini, registerGemini, unregisterGemini };
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
+/** Önceki oturum kapanmadan çöktüyse onun kaydını geri alır (o süreç hâlâ çalışıyorsa dokunmaz). */
+function recoverGemini(file) {
+  let s;
+  try { s = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return false; }
+  if (s.pid && s.pid !== process.pid && alive(s.pid)) return false;
+  registered = true; previous = s.previous ?? null; allowAdded = !!s.allowAdded; stateFile = file;
+  unregisterGemini(s.home || os.homedir());
+  return true;
+}
+
+module.exports = { recoverGemini, buildSpec, resolveClaude, resolveCodex, resolveGemini, registerGemini, unregisterGemini };

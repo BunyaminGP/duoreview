@@ -28,7 +28,8 @@ function sanitizeCfg(c) {
     reviewMode: pick(c.reviewMode, MODES, "after_all"),
     kickoff: pick(c.kickoff, KICKOFFS, "joint"),
     profile: pick(c.profile, PROFILES, "dengeli"),
-    brief: typeof c.brief === "string" ? c.brief.slice(0, 4000) : "",
+    brief: typeof c.brief === "string" ? c.brief : "",
+    verify: typeof c.verify === "string" ? c.verify.trim().slice(0, 1000) : "",
     models: Object.fromEntries(AGENTS.map((a) => [a, model(c.models?.[a])])),
     efforts: Object.fromEntries(AGENTS.map((a) => [a, pick(c.efforts?.[a], EFFORTS, "")])),
   };

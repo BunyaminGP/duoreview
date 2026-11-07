@@ -21,10 +21,15 @@ Codex'inkini Gemini, Gemini'ninkini Claude; iki kişilik takımda ikisi birbirin
 - **Kaptan + işçiler.** Bir ajan (hangisi olacağını sen seçersin) notları küçük görevlere çevirir ve dengeli böler. Öbür ajanlar plana katılmadan ya da itiraz etmeden kimse işe başlamaz.
 - **Okuyabildiğin tartışmalar.** Notlar ve bütün tartışmalar *Notlar ve tartışma* sekmesinde yan yana durur, tek bir Markdown dosyasına aktarılır. Mesaj sınırına uzlaşmadan ulaşan tartışma *ayrışma* diye işaretlenir; nerede anlaşamadıklarını görürsün.
 - **Çapraz inceleme.** Kimse kendi görevini incelemez. Yalnız `blocker` / `major` bulgular görevi durdurur, küçük notlar durdurmaz.
+- **Özet değil kanıt.** Görev üstlenilirken ve gönderilirken sunucu çalışma ağacının anlık görüntüsünü alır (geçici bir git index'iyle; senin index'ine ve dosyalarına dokunmaz). İnceleyene görevin kendi diff'i gider, aynı klasördeki ortakların değişiklikleri karışmaz; görevin `touches` listesi dışında değişen dosyalar ayrıca bildirilir (`unclaimed`).
+- **Kabul kriterleri.** Kaptan her göreve ölçülebilir `acceptance` kriterleri yazar. İnceleyen her birini `{ok, evidence}` ile işaretler (dosya:satır, komut çıktısı, test adı); karşılanmayan kriterle onay verilemez.
+- **İyi fikir kaybolmaz.** İnceleyen aynı işin daha sade, hızlı ya da algoritmik olarak daha iyi bir yolunu görürse `alternative` alanına yazar. İş bitmiş sayılmadan önce kaptan bunu ya benimser (`adopt`: yeni görev olur, varsayılan olarak önerenin) ya da teknik gerekçeyle reddeder (`reject`); ikisi de kayda geçer.
+- **Doğrulama kapısı.** İsteğe bağlı bir komut (ör. `npm test`) her `submit_task`'ta proje klasöründe çalışır; geçmezse görev sahibinde kalır, çıktı ajana döner.
+- **Proje skill'leri.** Skill'ler düğmesi bir skill klasörünü (içinde `SKILL.md`) projeye kopyalar: Claude için `.claude/skills`, Codex ve Gemini (agy) için `.agents/skills`. Yalnız o klasörde geçerlidir, eklenti kurmak gerekmez.
 - **Beraberlikte karar sende.** 3 inceleme turunda uzlaşılamazsa görev *ihtilaf* olur: kabul et, yeniden incelet ya da talimatınla geri gönder.
-- **Dosya çakışma koruması.** Her görev dokunacağı dosyaları bildirir. Ortağın bitmemiş görevine çakışan bir göreve başlanamaz.
+- **Dosya çakışma koruması.** Her görev dokunacağı dosyaları bildirir. Ortağın bitmemiş görevine (incelemede bekleyen dahil) çakışan bir göreve başlanamaz.
 - **Kota farkındalığı.** 5 saatlik ve haftalık kullanım göstergesi vardır. Kota dolunca uygulama o ajanı dürtmeyi bırakır, boşuna token yakmaz.
-- **Görev bağımlılığı.** Bir görev, önce bitmesi gereken görevleri (`depends_on`) belirtebilir; onlar onaylanmadan başlatılamaz.
+- **Görev bağımlılığı.** Bir görev, önce bitmesi gereken görevleri (`depends_on`; aynı plandakileri `key` ile) belirtebilir; onlar onaylanmadan başlatılamaz.
 - **Token tasarrufu.** `submit_task`, `review_task`, `post_note`, `discuss` ve `post_tasks` cevabı sıradaki adımı taşır, `next_action` sıradaki görevi kendisi üstlenir; ölçülen basit görev senaryosu (üstlen, gönder, inceleyen uyanır, incele) dört araç çağrısıdır (`npm run tokens`); açılış, tartışma ve yeniden çalışma turları buna dahil değildir. Başlıkta her ajanın araç çağrısı sayısı ile giden/gelen karakteri görünür (MCP sunucusu sayar; token değildir). Görev tarifi oturumda bir kez gider (`status(id)` yeniden verir), cevaplar küçüktür. Ekonomik / dengeli / güçlü profiller tek tıkla seçilir. Model menüleri CLI'ların sunduğu bütün modelleri listeler (Codex'inkiler kendi önbelleğinden), her modelin desteklediği efor seviyeleriyle.
 - **Ajanlar için üslup kuralları.** İki ajana giden kurallar kodda ve metinde alışılmış dolguyu yasaklar: kodu tekrar eden yorum, istenmemiş soyutlama ve dosya, giriş cümlesi, kapanış özeti, övgü, emoji. İnceleyen, istenmemiş dosyayı ve ilgisiz değişikliği `major` sayar.
 - **CLI izin verdiği sürece global ayarlarına dokunmaz.** MCP bağlantısı oturum başına verilir (Claude'a `--mcp-config`, Codex'e `-c`). `agy` MCP sunucusunu ve araç iznini yalnız global ayarından okur; bu yüzden Gemini başlarken uygulama `duoreview` sunucusunu (`agy mcp add`) ve `mcp(duoreview/*)` iznini ekler, Gemini kapanınca ikisini de siler. Pano verisi projenin dışında tutulur, reponun kirlenmez.
@@ -56,6 +61,27 @@ Hakem bir ajanın terminaline yalnız ajan boştayken ve ekranda onay sorusu ya 
 Uygulama olmadan MCP kullanımı ve ayar örneği için [İngilizce README](README.md#using-the-mcp-server-without-the-app) bölümüne bak.
 Ajanların izlediği döngü [TEAM.md](TEAM.md) dosyasındadır.
 
+## SWE-bench ile ölçüm
+
+`bench/swebench.mjs` aynı SWE-bench örneklerini tek ajanla ve takımla çözdürür, yamaları SWE-bench biçiminde yazar, resmi değerlendirmeyle puanlar ve koşuları karşılaştırır.
+CLI'ları tek seferlik kiplerinde sürer (`claude -p --resume`, `codex exec resume`, `agy -p --conversation`): terminal ve onay sorusu yoktur.
+**Claude ve agy izin denetimi kapalı çalışır** (CLI'larında çalışma klasörü sandbox'ı yok): `bench/work` altındaki atılabilir klonlarda, senin kullanıcı yetkilerin ve ortam değişkenlerinle. Codex kendi `workspace-write` sandbox'ında çalışır (`--codex-sandbox danger-full-access` kapatır). Bunu kabul ettiğin bir sanal makinede ya da konteynerde kullan; `run`, `--yes` olmadan çalışmaz.
+
+```powershell
+npm run bench -- fetch --dataset verified --per-repo 1         # her depodan bir örnek -> bench/work/data
+npm run bench -- run --mode gold                               # resmi düzeltmeler (ajan yok)
+npm run bench -- eval --name gold                              # bu makinede hangi örnekler geçebiliyor
+npm run bench -- run --mode claude --valid --yes               # taban: yalnız Claude, yalnız resmi düzeltmesi geçen örnekler
+npm run bench -- run --mode codex --valid --yes                # taban: yalnız Codex
+npm run bench -- run --mode team --team claude,codex --valid --yes # DuoReview takımı
+npm run bench -- eval --name claude                            # Docker'da resmi değerlendirme (her koşu için)
+npm run bench -- report                                        # bench/work/report.md
+```
+
+Önce resmi düzeltmeleri değerlendir: bazı testler ağ ya da yerel Docker'ın sağlamadığı bir ortam ister; resmi düzeltmesi burada geçmeyen örneği kimse çözemez. `--valid` yalnız `gold` koşusunda çözülenleri bırakır.
+Her örnek taban commit'inde geçmişsiz açılır; ajan düzeltmeyi `git log` ile bulamaz. Talimat sorun metnidir; ipuçları ve gizli testler gösterilmez.
+Seçenekler ve değerlendirme ayrıntısı [İngilizce README](README.md#benchmarking-on-swe-bench) içinde. Durdurulan koşu kaldığı yerden sürer.
+
 ## Sınırlar
 
 - **Windows**'ta geliştirildi ve denendi. macOS/Linux'ta `claude`/`codex` `PATH` üzerinden aranır, ama gerçek bir Mac veya Linux makinede henüz çalıştırılmadı (CI, Electron gerektirmeyen testleri Ubuntu'da koşar). Geri bildirim memnuniyetle.
@@ -77,7 +103,6 @@ Bir kodlama ajanının düzenlemesine razı olacağın projelerde kullan, commit
 ## Yol haritası
 
 - Ajan başına git worktree, diff görünümü ve birleştirme adımı
-- "Doğrulama komutu" kapısı (build ve testler geçmeden görev incelemeye girmesin)
 - macOS/Linux desteği
 
 ## Lisans
