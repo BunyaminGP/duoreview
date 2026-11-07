@@ -10,6 +10,7 @@
 - Fix: `read_inbox` could mark as read a message that arrived between reading and marking. The `status` header is translated. Gemini's global registration is cleaned up after a crash.
 - `bench/swebench.mjs`: headless SWE-bench runner (single agent vs team), official evaluation in Docker, comparison report.
 - Skills panel: adds a skill folder to the project's `.claude/skills` and `.agents/skills` (Codex and agy read the latter) and lists or removes them. The header wraps instead of pushing "Start team" off narrow screens.
+- Fix: on Windows a project path given with short (8.3) names, or on macOS through a symlink, marked every changed file as outside the task's `touches`; the server now uses the real path. CI actions moved to v5 (Node 24).
 - Shared task board over MCP for Claude Code and Codex: captain/worker roles, cross-review, dispute → user decides.
 - Electron app: two terminals, board, referee, usage meters, dispute panel.
 - English and Turkish UI, prompts and tool texts.

@@ -2,7 +2,7 @@
 // Üstlenirken ve gönderirken çalışma ağacının anlık görüntüsü (git ağacı) alınır; ikisinin farkı o görevin işidir.
 // Gerçek index'e ve çalışma ağacına dokunulmaz: index geçici bir kopyada güncellenir.
 import { execFileSync } from "node:child_process";
-import { copyFileSync, rmSync } from "node:fs";
+import { copyFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 
@@ -12,7 +12,11 @@ const git = (cwd: string, args: string[], env: Record<string, string> = {}) =>
     maxBuffer: 64 * 1024 * 1024, windowsHide: true,
   }).trim();
 
-export const projectDir = () => process.env.DUOREVIEW_PROJECT || process.cwd();
+// Gerçek yol: git kök klasörü kanonik döndürür; kısa ad (RUNNER~1) ya da sembolik bağ kalırsa göreli yollar bozulur.
+export const projectDir = () => {
+  const dir = process.env.DUOREVIEW_PROJECT || process.cwd();
+  try { return realpathSync.native(dir); } catch { return dir; }
+};
 
 /** Çalışma ağacının (.gitignore dışı, izlenmeyen dosyalar dahil) ağaç kimliği; git deposu değilse null. */
 export function snapshot(cwd = projectDir()): string | null {
