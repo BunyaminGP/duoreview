@@ -1,7 +1,7 @@
 // Takım akışı kuralları. Hem MCP sunucusu hem uygulamadaki hakem bunu kullanır.
 import type { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
-import { AGENTS, MAX_POSTS, type Agent } from "./db.js";
+import { AGENTS, MAX_POSTS, MAX_CROSS_ROUNDS, type Agent } from "./db.js";
 import { projectDir } from "./git.js";
 import { t as tr } from "./i18n.js";
 
@@ -9,14 +9,14 @@ export type Task = {
   id: number; title: string; description: string; status: string;
   assignee: Agent | null; owner: Agent | null; touches: string; summary: string | null;
   files: string | null; rounds: number; updated_at: string; depends_on: string; acceptance: string;
-  base: string | null; head: string | null; diff: string | null; unclaimed: string | null; verify: string | null; origin: number | null;
+  base: string | null; head: string | null; diff: string | null; unclaimed: string | null; verify: string | null; origin: number | null; reviewer: Agent | null;
 };
 export type Review = {
   id: number; task_id: number; reviewer: string; verdict: string; comment: string;
   checks: string | null; alternative: string | null; triage: string | null; triage_note: string | null;
 };
 export type ReviewMode = "after_all" | "immediate";
-export type Kickoff = "solo" | "joint";
+export type Kickoff = "solo" | "joint" | "cross";
 export type Stance = "propose" | "object" | "agree";
 export type Thread = {
   id: number; kind: "kickoff" | "plan" | "free"; topic: string; task_id: number | null; blocking: number;
@@ -52,14 +52,27 @@ export const others = (db: DatabaseSync, me: Agent) => teamOf(db).filter((a) => 
 export const teamChangeBlocked = (db: DatabaseSync, team: string[]) =>
   team.join(",") !== teamOf(db).join(",") &&
   !!(one(db, "SELECT id FROM tasks WHERE status<>'DONE'") || (!planned(db) && one(db, "SELECT id FROM notes WHERE kind='kickoff'")));
-/** Görevin inceleyicisi: takım sırasında sahibinden sonraki ajan (iki kişide ortak, üç kişide döngü). */
+/** Görevin inceleyicisi: kullanıcı seçtiyse o, yoksa takım sırasında sahibinden sonraki ajan (iki kişide ortak, üç kişide döngü). */
 export const reviewerOf = (db: DatabaseSync, t: Task): Agent => {
   const team = teamOf(db);
+  if (t.reviewer && t.reviewer !== t.owner && team.includes(t.reviewer)) return t.reviewer;
   return team[(team.indexOf(t.owner as Agent) + 1) % team.length];
 };
+/** Kullanıcı inceleyiciyi değiştirir (ör. inceleyicinin kotası doldu). Sahibi olan, bitmemiş görevde; sahibi dışında takımdan biri. */
+export function setReviewer(db: DatabaseSync, id: number, who: Agent): boolean {
+  const t = one<Task>(db, "SELECT * FROM tasks WHERE id=?", id);
+  if (!t || !t.owner || t.status === "DONE" || who === t.owner || !teamOf(db).includes(who)) return false;
+  if (reviewerOf(db, t) === who) return true;
+  run(db, "UPDATE tasks SET reviewer=?, updated_at=datetime('now') WHERE id=?", who, id);
+  logEvent(db, "user", tr("evReviewer", { id, who }));
+  return true;
+}
 export const reviewMode = (db: DatabaseSync) => getMeta(db, "review_mode", "after_all") as ReviewMode;
 
-/** joint: plan öncesi iki ajan ayrı ayrı inceler, sonra tartışır. solo: yalnız kaptan planlar. */
+/** Subagent kuralı (ajana talimat olarak gider): off | research | scoped. */
+export const subagentsOf = (db: DatabaseSync) => getMeta(db, "subagents", "research");
+
+/** joint: plan öncesi ajanlar ayrı ayrı inceler, sonra serbest tartışır. cross: notlardaki iddialar tek tek çapraz incelenir. solo: yalnız kaptan planlar. */
 export const kickoffOf = (db: DatabaseSync) => getMeta(db, "kickoff", "solo") as Kickoff;
 /** Kaptan planı yazdı mı (hiç görev çıkmayan analiz/araştırma işlerinde de 1 olur). */
 export const planned = (db: DatabaseSync) => getMeta(db, "planned", "0") === "1";
@@ -162,10 +175,23 @@ export function nextAction(db: DatabaseSync, me: Agent): Record<string, any> {
   if (!teamOf(db).includes(me)) return { action: "WAIT", reason: tr("notInTeam", { team: teamOf(db).join(", ") }) };
   const replying = (th: Thread) => ({ action: "WAIT", reason: tr("partnerReplying", { partner: nextSpeaker(db, th) }) });
   if (total(db) === 0 && !planned(db)) {
-    if (kickoffOf(db) === "joint") {
+    if (kickoffOf(db) !== "solo") {
       if (!kickoffNote(db, me)) return { action: "ANALYZE" };
       const missing = others(db, me).filter((a) => !kickoffNote(db, a));
       if (missing.length) return { action: "WAIT", reason: tr("partnerAnalyzing", { partner: missing.join(", ") }) };
+      if (kickoffOf(db) === "cross") {
+        const st = crossStage(db);
+        if (st.phase !== "consensus") {
+          const mine = st.pending.filter((p) => p.agent === me).map((p) => p.claim);
+          if (mine.length) {
+            return { action: st.phase === "assess" ? "CROSS_REVIEW" : "REBUTTAL", round: st.round, claims: mine, key: `${st.phase}:${st.round}:${mine.join(",")}` };
+          }
+          return { action: "WAIT", reason: tr(st.phase === "assess" ? "crossAssessing" : "crossRebutting", { who: [...new Set(st.pending.map((p) => p.agent))].join(", ") }) };
+        }
+        if (!consensusDone(db)) {
+          return me === captain ? { action: "CONSENSUS", key: "consensus" } : { action: "WAIT", reason: tr("captainConsensus", { captain }) };
+        }
+      }
       const th = one<Thread>(db, "SELECT * FROM threads WHERE kind='kickoff' AND status='OPEN'");
       if (th) return myTurn(db, th, me) ? discuss(db, th) : replying(th);
     }
@@ -297,7 +323,43 @@ export function compact(db: DatabaseSync, a: Record<string, any>, delivered: Set
     }
     case "PLAN": {
       const th = one<Thread>(db, "SELECT * FROM threads WHERE kind='kickoff' ORDER BY id DESC");
-      return { action: "PLAN", outcome: th?.outcome ?? undefined, ...talk(th) };
+      const decided = once("d", all<Decision>(db, "SELECT * FROM decisions ORDER BY id")).map(decisionOut);
+      return { action: "PLAN", outcome: th?.outcome ?? undefined, ...talk(th), consensus: decided.length ? decided : undefined };
+    }
+    case "CROSS_REVIEW": case "REBUTTAL": case "CONSENSUS": {
+      if (!me) return { action: a.action };
+      const sent: string[] = [];
+      const book = ledger(db);
+      const byId = new Map(book.map((c) => [c.id, c]));
+      const pick = ((a.claims ?? []) as number[]).map((id) => byId.get("C" + id)!);
+      if (a.action === "CONSENSUS") {
+        for (const c of book) sent.push(c.id, ...c.assessments.map((x) => x.id), ...c.rebuttals.map((x) => x.id));
+        deliver(db, me, sent);
+        return { action: "CONSENSUS", claims: book };
+      }
+      if (a.action === "REBUTTAL") {
+        const items = pick.map((c) => {
+          const objections = c.assessments.filter((x) => x.round === a.round && x.verdict !== "agree");
+          sent.push(...objections.map((x) => x.id));
+          return { id: c.id, text: c.text, objections: objections.map(({ id, by, verdict, text, evidence }) => ({ id, by, verdict, text, evidence })) };
+        });
+        deliver(db, me, sent);
+        return { action: "REBUTTAL", round: a.round, claims: items };
+      }
+      // CROSS_REVIEW: 1. turda ortakların tam notları (oturumda bir kez) ve iddiaları; sonraki turlarda savunma ve önceki hükmüm.
+      const theirs = a.round === 1 ? once("n", others(db, me).map((x) => kickoffNote(db, x)).filter((n): n is Note => !!n)) : [];
+      sent.push(...theirs.map((n) => "N" + n.id));
+      const items = pick.map((c) => {
+        sent.push(c.id);
+        if (a.round === 1) return { id: c.id, by: c.by, text: c.text, evidence: c.evidence };
+        const rebuttal = c.rebuttals.find((r) => r.round === a.round - 1)!;
+        const yours = [...c.assessments].reverse().find((x) => x.by === me && x.round < a.round);
+        sent.push(rebuttal.id);
+        return { id: c.id, by: c.by, text: c.text, rebuttal: { id: rebuttal.id, action: rebuttal.action, text: rebuttal.text, evidence: rebuttal.evidence },
+          yours: yours && { id: yours.id, verdict: yours.verdict, text: yours.text } };
+      });
+      deliver(db, me, sent);
+      return { action: "CROSS_REVIEW", round: a.round, notes: theirs.length ? theirs.map((n) => ({ id: "N" + n.id, by: n.author, text: n.text })) : undefined, claims: items };
     }
     default: return { action: a.action };
   }
@@ -319,6 +381,23 @@ export function reviewPacket(db: DatabaseSync, id: number) {
   };
 }
 
+/** Arayüzdeki görev ayrıntısı: tarif, kriterler, kanıt paketi ve inceleme geçmişi. Görev yoksa null. */
+export function taskDetail(db: DatabaseSync, id: number) {
+  const t = one<Task>(db, "SELECT * FROM tasks WHERE id=?", id);
+  if (!t) return null;
+  const list = (s: string | null) => { try { return JSON.parse(s ?? "[]") as any[]; } catch { return []; } };
+  const p = reviewPacket(db, id);
+  return {
+    id: t.id, title: t.title, status: t.status, owner: t.owner, assignee: t.assignee, rounds: t.rounds,
+    reviewer: t.owner ? reviewerOf(db, t) : null,
+    description: t.description, acceptance: list(t.acceptance) as string[], touches: list(t.touches) as string[],
+    depends_on: list(t.depends_on) as number[], summary: t.summary, files: p.files,
+    diff: p.diff ?? "", truncated: p.truncated, unclaimed: p.unclaimed ?? [], verify: p.verify ?? null,
+    reviews: all<Review>(db, "SELECT * FROM reviews WHERE task_id=? ORDER BY id", id).map((r) => ({
+      reviewer: r.reviewer, verdict: r.verdict, comment: r.comment, checks: list(r.checks), alternative: r.alternative ?? null })),
+  };
+}
+
 /** Hakemin tekrar dürtmeyi karar vermesi için durum imzası. */
 export const signature = (a: Record<string, any>) =>
   `${a.action}:${a.task?.id ?? a.key ?? ""}:${a.task?.status ?? ""}:${a.task?.updated_at ?? ""}`;
@@ -332,17 +411,115 @@ export function briefing(db: DatabaseSync, me: Agent): string {
     tr("teamLine", { team: teamOf(db).join(", ") }),
     brief && tr("briefLine", { brief }),
     tr("loop"),
-    tr(kickoffOf(db) === "joint" ? "loopJoint" : "loopSolo"),
+    tr(({ joint: "loopJoint", cross: "loopCross", solo: "loopSolo" } as const)[kickoffOf(db)] ?? "loopSolo"),
     tr(reviewMode(db) === "immediate" ? "reviewNow" : "reviewLater"),
+    tr(({ off: "subOff", scoped: "subScoped" } as const)[subagentsOf(db) as "off" | "scoped"] ?? "subResearch"),
+    subagentsOf(db) !== "off" && tr("subRules"),
     tr("style"),
   ].filter(Boolean).join(" ");
 }
 
-/** Arayüz ve dışa aktarma için: tüm notlar ve tartışmalar. */
+/** Arayüz ve dışa aktarma için: tüm notlar, tartışmalar ve çapraz inceleme kaydı (iddialar, kararlar, teslimler). */
 export function discussion(db: DatabaseSync) {
   return {
+    claims: ledger(db),
+    decisions: all<Decision>(db, "SELECT * FROM decisions ORDER BY id").map(decisionOut),
+    deliveries: all<{ recipient: string; item: string; created_at: string }>(db, "SELECT recipient, item, created_at FROM deliveries ORDER BY id"),
     notes: all<Note & { created_at: string }>(db, "SELECT * FROM notes ORDER BY id"),
     threads: all<Thread & { updated_at: string }>(db, "SELECT * FROM threads ORDER BY id")
       .map((th) => ({ ...th, posts: all<Post & { created_at: string }>(db, "SELECT * FROM posts WHERE thread_id=? ORDER BY id", th.id) })),
   };
+}
+
+// ---- çapraz inceleme ------------------------------------------------------
+// Kimlikler önekli gider: N (not), C (iddia), A (hüküm), R (savunma), D (karar). Araçlar sayıyı ya da önekli biçimi kabul eder.
+export type Verdict = "agree" | "disagree" | "unsure" | "alternative";
+export type Claim = { id: number; note_id: number; author: Agent; text: string; original: string; evidence: string };
+export type Assessment = { id: number; claim_id: number; reviewer: Agent; round: number; verdict: Verdict; text: string; evidence: string; reply_to: number | null };
+export type Rebuttal = { id: number; claim_id: number; author: Agent; round: number; action: "defend" | "revise" | "withdraw"; text: string; evidence: string; reply_to: string };
+export type Decision = { id: number; kind: string; claim_id: number | null; text: string; refs: string; author: Agent };
+export type CrossStage =
+  | { phase: "assess" | "rebut"; round: number; pending: { claim: number; agent: Agent }[] }
+  | { phase: "consensus" };
+
+/** Geçerli açılışın iddiaları (pano yeniden başlatılınca eski açılış notları "note" olur, iddiaları da düşer). */
+export const claimsOf = (db: DatabaseSync) =>
+  all<Claim>(db, "SELECT c.* FROM claims c JOIN notes n ON n.id=c.note_id WHERE n.kind='kickoff' ORDER BY c.id");
+const crossRows = (db: DatabaseSync) => {
+  const claims = claimsOf(db);
+  const ids = new Set(claims.map((c) => c.id));
+  return {
+    claims,
+    as: all<Assessment>(db, "SELECT * FROM assessments ORDER BY id").filter((x) => ids.has(x.claim_id)),
+    rb: all<Rebuttal>(db, "SELECT * FROM rebuttals ORDER BY id").filter((x) => ids.has(x.claim_id)),
+  };
+};
+export const consensusDone = (db: DatabaseSync) => getMeta(db, "consensus", "0") === "1";
+export const deliver = (db: DatabaseSync, to: Agent, items: string[]) => {
+  for (const item of items) run(db, "INSERT OR IGNORE INTO deliveries(recipient, item) VALUES (?,?)", to, item);
+};
+export const wasDelivered = (db: DatabaseSync, to: Agent, item: string) =>
+  !!one(db, "SELECT 1 FROM deliveries WHERE recipient=? AND item=?", to, item);
+
+/**
+ * Çapraz incelemenin sıradaki aşaması. 1. tur: her ajan ortaklarının her iddiasına hüküm verir.
+ * Katılmayan, emin olmayan ya da alternatif öneren biri varsa iddia itirazlıdır ve sahibine savunmaya döner;
+ * itirazsız iddiaya ek tur açılmaz. Savunmadan sonra yalnız itiraz edenler (iddia değiştiyse tüm ortaklar) yeniden hükmeder.
+ * MAX_CROSS_ROUNDS'tan sonra savunma istenmez: kalan ayrılık kaptanın kararına "çözülemedi" olarak gider.
+ */
+export function crossStage(db: DatabaseSync): CrossStage {
+  const team = teamOf(db);
+  const { claims, as, rb } = crossRows(db);
+  const verdict = (c: number, a: Agent, r: number) => as.find((x) => x.claim_id === c && x.reviewer === a && x.round === r)?.verdict;
+  let targets = claims.flatMap((c) => team.filter((a) => a !== c.author).map((agent) => ({ claim: c.id, agent })));
+  for (let round = 1; targets.length; round++) {
+    const missing = targets.filter((t) => !verdict(t.claim, t.agent, round));
+    if (missing.length) return { phase: "assess", round, pending: missing };
+    if (round >= MAX_CROSS_ROUNDS) break;
+    const contested = claims.filter((c) => targets.some((t) => t.claim === c.id && verdict(c.id, t.agent, round) !== "agree"));
+    const unanswered = contested.filter((c) => !rb.some((r) => r.claim_id === c.id && r.round === round));
+    if (unanswered.length) return { phase: "rebut", round, pending: unanswered.map((c) => ({ claim: c.id, agent: c.author })) };
+    targets = contested.flatMap((c) => {
+      const r = rb.find((x) => x.claim_id === c.id && x.round === round)!;
+      if (r.action === "withdraw") return [];
+      if (r.action === "revise") return team.filter((a) => a !== c.author).map((agent) => ({ claim: c.id, agent }));
+      return targets.filter((t) => t.claim === c.id && verdict(c.id, t.agent, round) !== "agree");
+    });
+  }
+  return { phase: "consensus" };
+}
+
+/** İddianın son durumu: her ortağın en son hükmüne göre. */
+function claimStatus(c: Claim, as: Assessment[], rb: Rebuttal[]) {
+  if (rb.some((r) => r.claim_id === c.id && r.action === "withdraw")) return "withdrawn";
+  const latest = new Map<string, Verdict>();
+  for (const x of as) if (x.claim_id === c.id) latest.set(x.reviewer, x.verdict);
+  const v = [...latest.values()];
+  if (!v.length) return "pending";
+  return v.some((x) => x === "disagree" || x === "alternative") ? "contested" : v.includes("unsure") ? "unverified" : "agreed";
+}
+
+/** Tüm iddialar, hükümler ve savunmalar; kimlikler önekli. */
+export function ledger(db: DatabaseSync) {
+  const { claims, as, rb } = crossRows(db);
+  return claims.map((c) => ({
+    id: "C" + c.id, by: c.author, text: c.text, original: c.original !== c.text ? c.original : undefined, evidence: c.evidence || undefined,
+    status: claimStatus(c, as, rb),
+    assessments: as.filter((x) => x.claim_id === c.id).map((x) => ({
+      id: "A" + x.id, by: x.reviewer, round: x.round, verdict: x.verdict, text: x.text, evidence: x.evidence || undefined,
+      reply_to: x.reply_to ? "R" + x.reply_to : undefined })),
+    rebuttals: rb.filter((x) => x.claim_id === c.id).map((x) => ({
+      id: "R" + x.id, round: x.round, action: x.action, text: x.text, evidence: x.evidence || undefined,
+      reply_to: (JSON.parse(x.reply_to) as number[]).map((i) => "A" + i) })),
+  }));
+}
+
+export const decisionOut = (d: Decision) =>
+  ({ id: "D" + d.id, kind: d.kind, claim: d.claim_id ? "C" + d.claim_id : undefined, text: d.text, refs: JSON.parse(d.refs) as string[] });
+
+/** "C12", "c12" ya da 12 → 12; önek tutmazsa NaN. */
+export function refId(v: number | string, prefix: string) {
+  if (typeof v === "number") return v;
+  const m = new RegExp(`^${prefix}?(\\d+)$`, "i").exec(v.trim());
+  return m ? Number(m[1]) : NaN;
 }

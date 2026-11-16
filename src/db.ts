@@ -8,6 +8,8 @@ export const MAX_REVIEW_ROUNDS = 3;
 /** İki kişilik takımda bir tartışmada en çok kaç mesaj yazılır (takım büyüdükçe orantılı artar); dolunca uzlaşma yoksa "ayrışma" olarak kapanır. */
 export const MAX_POSTS = { kickoff: 4, plan: 4, free: 6 } as const;
 export const MAX_OPEN_THREADS = 2;
+/** Çapraz incelemede bir iddia en çok kaç kez değerlendirilir: 1. tur herkes, sonraki turlar yalnız itiraz kalan iddialarda. Aradaki her tura bir savunma düşer. */
+export const MAX_CROSS_ROUNDS = 2;
 
 /** Sonradan eklenen sütunlar: eski panolar açılırken eklenir. */
 const COLUMNS = [
@@ -19,6 +21,7 @@ const COLUMNS = [
   ["tasks", "unclaimed", "TEXT"],                        // hiçbir görevin touches'ında olmayan değişen dosyalar
   ["tasks", "verify", "TEXT"],                           // son doğrulama komutu sonucu (JSON)
   ["tasks", "origin", "INTEGER"],                        // benimsenen alternatiften doğduysa o incelemenin id'si
+  ["tasks", "reviewer", "TEXT"],                         // kullanıcının seçtiği inceleyici (boşsa takım sırası)
   ["reviews", "checks", "TEXT"],
   ["reviews", "alternative", "TEXT"],                    // daha sade/hızlı yol önerisi
   ["reviews", "triage", "TEXT"],                         // adopted | rejected (kaptanın kararı)
@@ -91,6 +94,57 @@ export function openDb(dataDir: string) {
       stance TEXT NOT NULL,                -- propose | object | agree
       text TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    -- Çapraz inceleme: açılış notundaki teknik iddialar, her ajanın her iddiaya verdiği hüküm, iddia sahibinin savunması, kaptanın kararları.
+    CREATE TABLE IF NOT EXISTS claims (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      note_id INTEGER NOT NULL,
+      author TEXT NOT NULL,
+      text TEXT NOT NULL,                  -- güncel metin (revise ile değişir)
+      original TEXT NOT NULL,
+      evidence TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS assessments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      claim_id INTEGER NOT NULL,
+      reviewer TEXT NOT NULL,
+      round INTEGER NOT NULL,
+      verdict TEXT NOT NULL,               -- agree | disagree | unsure | alternative
+      text TEXT NOT NULL,
+      evidence TEXT NOT NULL DEFAULT '',
+      reply_to INTEGER,                    -- 2. turdan itibaren yanıtlanan savunma (rebuttals.id)
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (claim_id, reviewer, round)
+    );
+    CREATE TABLE IF NOT EXISTS rebuttals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      claim_id INTEGER NOT NULL,
+      author TEXT NOT NULL,
+      round INTEGER NOT NULL,
+      action TEXT NOT NULL,                -- defend | revise | withdraw
+      text TEXT NOT NULL,
+      evidence TEXT NOT NULL DEFAULT '',
+      reply_to TEXT NOT NULL DEFAULT '[]', -- yanıtlanan itirazlar (assessments.id)
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (claim_id, round)
+    );
+    CREATE TABLE IF NOT EXISTS decisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,                  -- accepted | rejected | unresolved | missing_evidence | verification
+      claim_id INTEGER,
+      text TEXT NOT NULL,
+      refs TEXT NOT NULL DEFAULT '[]',     -- dayanak kimlikleri: C1, A3, R2
+      author TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    -- Sunucunun bir ajana gerçekten gönderdiği içerik (n:not, c:iddia, a:hüküm, r:savunma). İlk gönderim zamanı kalır.
+    CREATE TABLE IF NOT EXISTS deliveries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      recipient TEXT NOT NULL,
+      item TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (recipient, item)
     );
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS events (

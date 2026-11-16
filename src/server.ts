@@ -12,6 +12,7 @@ import {
   all, one, run, tx, logEvent, captainOf, reviewMode, reviewPhaseOpen, quota, getMeta,
   claimable, nextAction, compact, briefing, kickoffOf, planned, total, setMeta, kickoffNote, postsOf, myTurn,
   openThread, addPost, teamOf, others, reviewerOf, norm, parsePaths, overlaps, ACTIVE, type Task, type Thread, type Review,
+  crossStage, claimsOf, ledger, wasDelivered, refId, consensusDone, type Assessment, type Claim,
 } from "./flow.js";
 
 const me = process.env.AGENT_ID as Agent | undefined;
@@ -105,7 +106,9 @@ tool("next_action", tr("dNextAction"), {},
     const a = next();
     if (briefed) return reply(a);
     briefed = true;
-    return reply({ ...a, rules: briefing(db, me) });
+    const tag = process.env.DUOREVIEW_SESSION_TAG;
+    return reply({ ...a, rules: briefing(db, me),
+      ...(me === "codex" && tag && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(tag) ? { session_tag: tag } : {}) });
   });
 
 tool(
@@ -124,7 +127,7 @@ tool(
   },
   async ({ tasks }) => {
     if (captainOf(db) !== me) return fail(tr("onlyCaptain", { captain: captainOf(db) }));
-    const joint = kickoffOf(db) === "joint";
+    const joint = kickoffOf(db) !== "solo";
     const first = total(db) === 0 && !planned(db);
     if (joint && first && nextAction(db, me).action !== "PLAN") return fail(tr("kickoffFirst"));
     const team = teamOf(db);
@@ -367,18 +370,149 @@ tool("read_inbox", tr("dReadInbox"), {}, async () => tx(db, () => {
 }));
 
 tool("post_note", tr("dPostNote"),
-  { text: z.string().min(1).max(12000), title: z.string().max(120).default("") },
-  async ({ text, title }) => chain(tx(db, () => {
-    const kickoff = kickoffOf(db) === "joint" && total(db) === 0 && !planned(db) && !kickoffNote(db, me);
-    run(db, "INSERT INTO notes(author, kind, title, text) VALUES (?,?,?,?)", me, kickoff ? "kickoff" : "note", title, text);
-    log(kickoff ? tr("evKickoffNote") : tr("evNote", { title: title || text.slice(0, 60) }));
+  {
+    text: z.string().min(1).max(12000), title: z.string().max(120).default(""),
+    claims: z.array(z.object({ text: z.string().min(1).max(1500), evidence: z.string().max(1500).default("") })).max(20).optional(),
+  },
+  async ({ text, title, claims }) => chain(tx(db, () => {
+    const kickoff = kickoffOf(db) !== "solo" && total(db) === 0 && !planned(db) && !kickoffNote(db, me);
+    const cross = kickoff && kickoffOf(db) === "cross";
+    if (cross && !claims?.length) return fail(tr("needClaims"));
+    if (!cross && claims?.length) return fail(tr("claimsOnlyCross"));
+    const note = Number(run(db, "INSERT INTO notes(author, kind, title, text) VALUES (?,?,?,?)", me, kickoff ? "kickoff" : "note", title, text).lastInsertRowid);
+    const ids = (claims ?? []).map((c) => "C" + run(db, "INSERT INTO claims(note_id, author, text, original, evidence) VALUES (?,?,?,?,?)",
+      note, me, c.text, c.text, c.evidence).lastInsertRowid);
+    log(kickoff ? tr("evKickoffNote") + (ids.length ? ` (N${note}: ${ids.join(" ")})` : "") : tr("evNote", { title: title || text.slice(0, 60) }));
     if (kickoff && others(db, me).every((a) => kickoffNote(db, a))) {
-      const id = openThread(db, { kind: "kickoff", topic: tr("topicKickoff"), by: captainOf(db), blocking: true });
-      logEvent(db, "app", tr("evKickoffOpen", { id }));
+      if (cross) logEvent(db, "app", tr("evCrossOpen", { n: claimsOf(db).length }));
+      else logEvent(db, "app", tr("evKickoffOpen", { id: openThread(db, { kind: "kickoff", topic: tr("topicKickoff"), by: captainOf(db), blocking: true }) }));
     }
-    return {};
+    return { note: "N" + note, claims: ids.length ? ids : undefined };
   })),
 );
+
+// ---- çapraz inceleme ------------------------------------------------------
+/** Bu aşamada benden beklenen iddialar; aşama başka ise null. */
+const pendingFor = (phase: "assess" | "rebut") => {
+  const st = crossStage(db);
+  if (kickoffOf(db) !== "cross" || st.phase !== phase) return null;
+  return { round: st.round, claims: new Set(st.pending.filter((p) => p.agent === me).map((p) => p.claim)) };
+};
+/** Araç girdisindeki iddia kimliklerini çözer; geçersiz, tekrarlı ya da sırası bende olmayan varsa hata metni. */
+const pickClaims = (raw: (number | string)[], mine: Set<number>) => {
+  const ids = raw.map((v) => refId(v, "C"));
+  const bad = raw.filter((_, i) => !mine.has(ids[i]) || ids.indexOf(ids[i]) !== i);
+  return bad.length ? { error: tr("notYourClaims", { ids: bad.join(", "), mine: [...mine].map((i) => "C" + i).join(", ") }) } : { ids };
+};
+
+tool("assess", tr("dAssess"),
+  {
+    items: z.array(z.object({
+      claim: z.union([z.number(), z.string()]),
+      verdict: z.enum(["agree", "disagree", "unsure", "alternative"]),
+      text: z.string().min(1).max(3000),
+      evidence: z.string().max(2000).default(""),
+    })).min(1).max(60),
+  },
+  async ({ items }) => chain(tx(db, () => {
+    const p = pendingFor("assess");
+    if (!p) return fail(tr("notAssessPhase"));
+    const pick = pickClaims(items.map((i) => i.claim), p.claims);
+    if ("error" in pick) return fail(pick.error!);
+    // Ajan iddiayı (2. turdan itibaren savunmayı da) sunucudan almış olmalı: hüküm gerçekten teslim edilen metne verilir.
+    const rebuttals = pick.ids.map((id) => p.round > 1
+      ? one<{ id: number }>(db, "SELECT id FROM rebuttals WHERE claim_id=? AND round=?", id, p.round - 1)!.id : null);
+    const undelivered = [...pick.ids.map((id) => "C" + id), ...rebuttals.filter((r) => r !== null).map((r) => "R" + r)]
+      .filter((item) => !wasDelivered(db, me, item));
+    if (undelivered.length) return fail(tr("notDelivered", { ids: undelivered.join(", ") }));
+    const thin = items.findIndex((i) => (i.verdict === "agree" || i.verdict === "disagree") && !i.evidence.trim());
+    if (thin >= 0) return fail(tr("needAssessEvidence", { id: "C" + pick.ids[thin] }));
+    const out = items.map((i, k) => "A" + run(db,
+      "INSERT INTO assessments(claim_id, reviewer, round, verdict, text, evidence, reply_to) VALUES (?,?,?,?,?,?,?)",
+      pick.ids[k], me, p.round, i.verdict, i.text, i.evidence, rebuttals[k]).lastInsertRowid);
+    log(tr("evAssessed", { round: p.round, list: items.map((i, k) => `C${pick.ids[k]}:${i.verdict}`).join(" ") }));
+    return { ids: out };
+  })),
+);
+
+tool("rebut", tr("dRebut"),
+  {
+    items: z.array(z.object({
+      claim: z.union([z.number(), z.string()]),
+      action: z.enum(["defend", "revise", "withdraw"]),
+      text: z.string().min(1).max(3000),
+      evidence: z.string().max(2000).default(""),
+      revised: z.string().max(1500).optional(),
+    })).min(1).max(30),
+  },
+  async ({ items }) => chain(tx(db, () => {
+    const p = pendingFor("rebut");
+    if (!p) return fail(tr("notRebutPhase"));
+    const pick = pickClaims(items.map((i) => i.claim), p.claims);
+    if ("error" in pick) return fail(pick.error!);
+    const noRevision = items.findIndex((i) => i.action === "revise" && !i.revised?.trim());
+    if (noRevision >= 0) return fail(tr("needRevised", { id: "C" + pick.ids[noRevision] }));
+    // Savunma, sahibine gerçekten teslim edilen itirazlara yazılır ve onlara bağlanır.
+    const objections = pick.ids.map((id) => all<Assessment>(db,
+      "SELECT id FROM assessments WHERE claim_id=? AND round=? AND verdict<>'agree' ORDER BY id", id, p.round).map((a) => a.id));
+    const undelivered = objections.flat().map((a) => "A" + a).filter((item) => !wasDelivered(db, me, item));
+    if (undelivered.length) return fail(tr("notDelivered", { ids: undelivered.join(", ") }));
+    const out = items.map((i, k) => {
+      if (i.action === "revise") run(db, "UPDATE claims SET text=? WHERE id=?", i.revised!.trim(), pick.ids[k]);
+      return "R" + run(db, "INSERT INTO rebuttals(claim_id, author, round, action, text, evidence, reply_to) VALUES (?,?,?,?,?,?,?)",
+        pick.ids[k], me, p.round, i.action, i.text, i.evidence, JSON.stringify(objections[k])).lastInsertRowid;
+    });
+    log(tr("evRebutted", { round: p.round, list: items.map((i, k) => `C${pick.ids[k]}:${i.action}`).join(" ") }));
+    return { ids: out };
+  })),
+);
+
+const REF_TABLES: Record<string, string> = { N: "notes", C: "claims", A: "assessments", R: "rebuttals" };
+tool("post_consensus", tr("dPostConsensus"),
+  {
+    decisions: z.array(z.object({
+      kind: z.enum(["accepted", "rejected", "unresolved", "missing_evidence", "verification"]),
+      claim: z.union([z.number(), z.string()]).optional(),
+      text: z.string().min(1).max(2000),
+      refs: z.array(z.string()).max(20).default([]),
+    })).min(1).max(80),
+  },
+  async ({ decisions }) => chain(tx(db, () => {
+    if (captainOf(db) !== me) return fail(tr("onlyCaptainShort"));
+    if (kickoffOf(db) !== "cross" || crossStage(db).phase !== "consensus" || consensusDone(db)) return fail(tr("notConsensusPhase"));
+    const claims = claimsOf(db).map((c: Claim) => c.id);
+    const ids = decisions.map((d) => (d.claim === undefined ? null : refId(d.claim, "C")));
+    const unknown = ids.filter((id) => id !== null && !claims.includes(id));
+    if (unknown.length) return fail(tr("badRefs", { refs: unknown.map((i) => "C" + i).join(", ") }));
+    // Her iddia tam bir kez kabul, ret ya da çözülemedi kararı alır; eksik kanıt ve doğrulama maddeleri ek olarak yazılır.
+    const verdictOf = (id: number) => decisions.filter((d, i) => ids[i] === id && ["accepted", "rejected", "unresolved"].includes(d.kind)).length;
+    const uncovered = claims.filter((id) => verdictOf(id) !== 1);
+    if (uncovered.length) return fail(tr("consensusCoverage", { ids: uncovered.map((i) => "C" + i).join(", ") }));
+    const badRef = decisions.flatMap((d) => d.refs).find((r) => {
+      const table = REF_TABLES[r.trim()[0]?.toUpperCase()];
+      const id = table ? refId(r, r.trim()[0]) : NaN;
+      return !table || !one(db, `SELECT 1 FROM ${table} WHERE id=?`, id);
+    });
+    if (badRef) return fail(tr("badRefs", { refs: badRef }));
+    const out = decisions.map((d, i) => "D" + run(db, "INSERT INTO decisions(kind, claim_id, text, refs, author) VALUES (?,?,?,?,?)",
+      d.kind, ids[i], d.text, JSON.stringify(d.refs.map((r) => r.trim().toUpperCase())), me).lastInsertRowid);
+    setMeta(db, "consensus", "1");
+    const count = (k: string) => decisions.filter((d) => d.kind === k).length;
+    log(tr("evConsensus", { accepted: count("accepted"), rejected: count("rejected"), unresolved: count("unresolved"),
+      missing: count("missing_evidence"), verification: count("verification") }));
+    return { ids: out };
+  })),
+);
+
+tool("read_claims", tr("dReadClaims"), {}, async () => {
+  // Bağımsızlık: herkes analizini yazana dek ortakların iddiaları, hüküm turu bitene dek o turun ortak hükümleri gizli.
+  const st = crossStage(db);
+  const allIn = teamOf(db).every((a) => kickoffNote(db, a));
+  const book = ledger(db)
+    .filter((c) => allIn || c.by === me)
+    .map((c) => ({ ...c, assessments: c.assessments.filter((x) => x.by === me || st.phase !== "assess" || x.round < st.round) }));
+  return reply({ phase: st.phase === "consensus" ? (consensusDone(db) ? "decided" : "consensus") : `${st.phase}:${st.round}`, claims: book });
+});
 
 tool("discuss", tr("dDiscuss"),
   { thread: z.number(), stance: z.enum(["agree", "object", "propose"]), text: z.string().min(1).max(6000) },

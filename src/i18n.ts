@@ -21,6 +21,7 @@ export const MESSAGES = {
     userDecision: "KULLANICI KARARI (bağlayıcı): ",
     userDecisionDefault: "Bulguları kapat ve tekrar gönder.",
     evResolved: "#{id} ihtilafını çözdü → {owner} düzeltecek",
+    evReviewer: "#{id} inceleyicisini {who} yaptı",
     userReopen: "Kullanıcı yeniden incelemeyi istedi: ",
     userReopenDefault: "son düzeltmeler incelensin.",
     evReopened: "#{id} ihtilafını yeniden incelemeye açtı",
@@ -99,6 +100,10 @@ export const MESSAGES = {
     loopSolo: "PLAN (kaptan)→talimatı incele, post_tasks ile işleri takımdaki ajanlara dengeli böl (her göreve touches ve bu makinede denetlenebilir acceptance).",
     reviewNow: "İnceleme anında.",
     reviewLater: "İnceleme tüm işler bitince.",
+    subOff: "Subagent (alt ajan) kullanma.",
+    subResearch: "Subagent (alt ajan) yalnız okuma ve araştırma için kullanılabilir; dosya değiştirmez.",
+    subScoped: "Subagent (alt ajan) okuma ve araştırma için, ayrıca yalnız üstlendiğin görevin touches dosyalarına yazmak için kullanılabilir.",
+    subRules: "Subagent next_action dahil hiçbir duoreview aracını çağırmaz; işinin sorumluluğu sendedir, submit_task özetinde subagent kullandığını yaz.",
     style:
       "Üslup (kod, not, özet, mesaj, arayüz metni): " +
       "Kodda çevredeki kodun adlandırmasına ve yorum yoğunluğuna uy; kodu tekrar eden yorum, istenmemiş soyutlama/ayar/yedek yol, " +
@@ -106,7 +111,7 @@ export const MESSAGES = {
       "Metinde ilk cümlede sonucu söyle; giriş cümlesi, kapanış özeti, övgü, emoji, serpiştirilmiş kalın yazı, üçlü sıralama kalıbı, " +
       "'kapsamlı/sağlam/sorunsuz' türü sıfatlar yok; iddiayı dosya:satır, sayı ya da komut çıktısıyla destekle; bilmiyorsan öyle yaz. " +
       "Tartışmada katılmıyorsan söyle ve nedenini göster, nezaketen onaylama; ortağının yazdığını tekrar etme, eksik ya da yanlış bulduğunu yaz.",
-    dPostNote: "Analiz/bulgu notu yaz (kullanıcı uygulamada okur). ANALYZE adımında açılış notun budur.",
+    dPostNote: "Analiz/bulgu notu yaz (kullanıcı uygulamada okur). ANALYZE adımında açılış notun budur; çapraz inceleme açılışında claims ile teknik iddiaları ayrı ayrı ver (text, evidence).",
     dDiscuss: "Tartışmaya yanıt yaz. stance: agree (katılıyorum; son öneriyi yazan dışında herkes agree deyince tartışma kapanır) | object (katılmıyorum, gerekçesiyle) | propose (yeni öneri).",
     dOpenThread: "Ortaklarınla tartışma aç: yaklaşım, tasarım kararı, itiraz. task=ilgili görev no.",
     dReadThread: "id yoksa tartışma listesi; id ile notlar ve tüm mesajlar.",
@@ -147,6 +152,44 @@ export const MESSAGES = {
     evAltAdopted: "#{id} için alternatifi benimsedi → yeni görev #{task}",
     evAltRejected: "#{id} için alternatifi reddetti: {reason}",
     altTitle: "Alternatif (#{id}): {title}",
+    loopCross:
+      "Çapraz inceleme açılışı: ANALYZE→talimatı kendi başına yerine getir, ortaklarını bekleme; post_note ile notunu ve claims içinde notundaki teknik iddiaları " +
+      "(her biri tek, sınanabilir önerme; evidence: dosya:satır, komut çıktısı, kaynak) yaz. Notlar herkes yazana dek gizlidir. " +
+      "CROSS_REVIEW→ortaklarının tam notlarını ve iddialarını oku, assess ile her iddiaya ayrı hüküm ver: agree (gerekçe ve kanıt), disagree (hangi varsayım yanlış, kanıtıyla), " +
+      "unsure (hangi kanıt eksik), alternative (farklı yaklaşım ve kazancı). Özet çıkarma; iddiayı kodda/kaynakta sına. 2. turda savunmayı oku, hükmünü koru ya da değiştir. " +
+      "REBUTTAL→iddialarına gelen itirazları oku, rebut ile her biri için defend (yeni kanıtla savun), revise (revised: düzeltilmiş iddia) ya da withdraw (geri çek). " +
+      "Haklı itirazı savunma; gerçek ayrılık yoksa yapay tartışma üretme. " +
+      "CONSENSUS (kaptan)→post_consensus: her iddiaya tam bir kez accepted|rejected|unresolved, ayrıca missing_evidence ve verification maddeleri; refs ile dayandığın C/A/R kimliklerini ver. " +
+      "PLAN (kaptan)→kabul edilen kararları ve doğrulama maddelerini post_tasks ile görevlere çevir (doğrulamayı acceptance'a yaz); plan ortakların onayından geçer.",
+    needClaims: "Çapraz inceleme açılışında claims zorunlu: notundaki teknik iddiaları ayrı ayrı yaz (text, evidence).",
+    claimsOnlyCross: "claims yalnız çapraz inceleme açılışının ilk notunda kullanılır.",
+    evCrossOpen: "tüm analizler hazır → {n} iddia çapraz incelemeye açıldı",
+    notYourClaims: "Bu turda senden hüküm beklenmeyen ya da tekrarlanan iddia: {ids}. Beklenenler: {mine}.",
+    notAssessPhase: "Şu an hüküm turu yok (next_action çağır).",
+    notRebutPhase: "Şu an savunma turu yok (next_action çağır).",
+    notDelivered: "Henüz sana teslim edilmedi: {ids}. Önce next_action ile içeriği al.",
+    needAssessEvidence: "{id}: agree ve disagree kanıt ister (dosya:satır, komut çıktısı, kaynak).",
+    needRevised: "{id}: revise için revised alanına düzeltilmiş iddiayı yaz.",
+    notConsensusPhase: "Kararın zamanı değil: çapraz inceleme sürüyor ya da karar zaten yazıldı.",
+    consensusCoverage: "Her iddia tam bir kez accepted, rejected ya da unresolved almalı. Eksik ya da fazla: {ids}.",
+    badRefs: "Bilinmeyen kimlik: {refs} (geçerli önekler N, C, A, R).",
+    dAssess:
+      "[Çapraz inceleme] Ortaklarının iddialarına hüküm ver. items: {claim: C kimliği, verdict, text, evidence}. " +
+      "verdict: agree (text gerekçe, evidence kanıt; zorunlu) | disagree (text yanlış varsayım, evidence kanıt; zorunlu) | unsure (text eksik kanıt) | alternative (text farklı yaklaşım ve kazancı). " +
+      "Turda beklenen iddiaları bir ya da birkaç çağrıda verebilirsin.",
+    dRebut:
+      "[Çapraz inceleme] İddialarına gelen itirazlara yanıt ver. items: {claim, action, text, evidence, revised}. " +
+      "action: defend (iddia aynen kalır, text/evidence yeni gerekçe) | revise (revised: düzeltilmiş iddia; ortaklar yeniden hükmeder) | withdraw (geri çek).",
+    dPostConsensus:
+      "[Kaptan] Çapraz inceleme kararı. decisions: {kind, claim, text, refs}. Her iddia tam bir kez accepted, rejected ya da unresolved alır; " +
+      "missing_evidence (eksik kanıt) ve verification (gerekli doğrulama işlemi, komutuyla) maddeleri ek yazılır. refs: dayanak kimlikleri (C, A, R, N).",
+    dReadClaims: "Çapraz inceleme kaydı: iddialar, hükümler, savunmalar ve aşama (süren hüküm turunda ortakların o turdaki hükümleri gizlidir).",
+    evAssessed: "{round}. tur hükümleri: {list}",
+    evRebutted: "{round}. tur savunmaları: {list}",
+    evConsensus: "çapraz inceleme kararı: {accepted} kabul, {rejected} ret, {unresolved} çözülemedi, {missing} eksik kanıt, {verification} doğrulama",
+    crossAssessing: "Hüküm turu sürüyor: {who}.",
+    crossRebutting: "İtiraz alan iddia sahipleri savunma yazıyor: {who}.",
+    captainConsensus: "Kaptan ({captain}) çapraz incelemenin kararını yazıyor.",
   },
   en: {
     captainPlanning: "The captain ({captain}) is preparing the plan.",
@@ -160,6 +203,7 @@ export const MESSAGES = {
     userDecision: "USER DECISION (binding): ",
     userDecisionDefault: "Close the findings and resubmit.",
     evResolved: "#{id} dispute resolved → {owner} will fix it",
+    evReviewer: "made {who} the reviewer of #{id}",
     userReopen: "The user asked for a re-review: ",
     userReopenDefault: "review the latest fixes.",
     evReopened: "#{id} dispute reopened for review",
@@ -237,6 +281,10 @@ export const MESSAGES = {
     loopSolo: "PLAN (captain)→study the instruction, split the work evenly between the agents in the team with post_tasks (touches and acceptance that can be checked on this machine, on every task).",
     reviewNow: "Review immediately.",
     reviewLater: "Review once all work is done.",
+    subOff: "Do not use subagents.",
+    subResearch: "Subagents may be used for reading and research only; they do not change files.",
+    subScoped: "Subagents may be used for reading and research, and to write only the files in the touches of the task you own.",
+    subRules: "A subagent never calls a duoreview tool, next_action included; you are responsible for its work, and you say in the submit_task summary that you used one.",
     style:
       "Style (code, notes, summaries, messages, UI copy): " +
       "In code match the naming and comment density around you; no comments that restate the code, no unrequested abstraction/option/fallback, " +
@@ -244,7 +292,7 @@ export const MESSAGES = {
       "In text put the result in the first sentence; no opener, no closing recap, no praise, no emoji, no scattered bold, no rule-of-three lists, " +
       "no adjectives like 'comprehensive/robust/seamless'; back a claim with file:line, a number or command output; if you do not know, say so. " +
       "In discussion say when you disagree and show why, do not agree to be polite; do not repeat what your partner wrote, write what is missing or wrong.",
-    dPostNote: "Write an analysis/findings note (the user reads it in the app). In the ANALYZE step this is your kickoff note.",
+    dPostNote: "Write an analysis/findings note (the user reads it in the app). In the ANALYZE step this is your kickoff note; in a cross-review kickoff list its technical claims one by one in claims (text, evidence).",
     dDiscuss: "Reply in a discussion. stance: agree (the discussion closes once everyone but the author of the last proposal agrees) | object (disagree, with the reason) | propose (new proposal).",
     dOpenThread: "Open a discussion with your partners: approach, design decision, objection. task=related task id.",
     dReadThread: "Without id: list of discussions; with id: notes and all messages.",
@@ -285,6 +333,44 @@ export const MESSAGES = {
     evAltAdopted: "adopted the alternative for #{id} → new task #{task}",
     evAltRejected: "rejected the alternative for #{id}: {reason}",
     altTitle: "Alternative (#{id}): {title}",
+    loopCross:
+      "Cross-review kickoff: ANALYZE→carry out the instruction on your own, do not wait for your partners; write your note with post_note and the technical claims in it under claims " +
+      "(each a single testable statement; evidence: file:line, command output, source). Notes stay hidden until everyone has written one. " +
+      "CROSS_REVIEW→read your partners' full notes and claims, give each claim its own verdict with assess: agree (reason and evidence), disagree (which assumption is wrong, with evidence), " +
+      "unsure (which evidence is missing), alternative (a different approach and its gain). Do not summarise; test the claim against the code/source. In round 2 read the rebuttal, keep or change your verdict. " +
+      "REBUTTAL→read the objections to your claims and answer each with rebut: defend (defend with new evidence), revise (revised: the corrected claim) or withdraw. " +
+      "Do not defend against a valid objection; if there is no real disagreement, do not manufacture one. " +
+      "CONSENSUS (captain)→post_consensus: exactly one accepted|rejected|unresolved per claim, plus missing_evidence and verification items; give the C/A/R ids you rely on in refs. " +
+      "PLAN (captain)→turn the accepted decisions and verification items into tasks with post_tasks (put the verification in acceptance); the plan goes past your partners.",
+    needClaims: "A cross-review kickoff note needs claims: list the technical claims in your note one by one (text, evidence).",
+    claimsOnlyCross: "claims are only used in the first note of a cross-review kickoff.",
+    evCrossOpen: "all analyses are in → {n} claims opened for cross review",
+    notYourClaims: "Claims not expected from you in this round, or repeated: {ids}. Expected: {mine}.",
+    notAssessPhase: "No verdict round is open now (call next_action).",
+    notRebutPhase: "No rebuttal round is open now (call next_action).",
+    notDelivered: "Not delivered to you yet: {ids}. Get the content with next_action first.",
+    needAssessEvidence: "{id}: agree and disagree need evidence (file:line, command output, source).",
+    needRevised: "{id}: revise needs the corrected claim in revised.",
+    notConsensusPhase: "Not the time for a decision: the cross review is still running or the decision is already written.",
+    consensusCoverage: "Every claim needs exactly one accepted, rejected or unresolved. Missing or repeated: {ids}.",
+    badRefs: "Unknown id: {refs} (valid prefixes N, C, A, R).",
+    dAssess:
+      "[Cross review] Give verdicts on your partners' claims. items: {claim: C id, verdict, text, evidence}. " +
+      "verdict: agree (text reason, evidence proof; required) | disagree (text the wrong assumption, evidence proof; required) | unsure (text the missing evidence) | alternative (text a different approach and its gain). " +
+      "You may cover the claims expected in the round in one or several calls.",
+    dRebut:
+      "[Cross review] Answer the objections to your claims. items: {claim, action, text, evidence, revised}. " +
+      "action: defend (the claim stays, text/evidence the new argument) | revise (revised: the corrected claim; partners give new verdicts) | withdraw.",
+    dPostConsensus:
+      "[Captain] Cross-review decision. decisions: {kind, claim, text, refs}. Every claim gets exactly one accepted, rejected or unresolved; " +
+      "missing_evidence and verification (a required check, with its command) items come on top. refs: ids relied on (C, A, R, N).",
+    dReadClaims: "Cross-review record: claims, verdicts, rebuttals and the phase (during a verdict round your partners' verdicts for that round are hidden).",
+    evAssessed: "round {round} verdicts: {list}",
+    evRebutted: "round {round} rebuttals: {list}",
+    evConsensus: "cross-review decision: {accepted} accepted, {rejected} rejected, {unresolved} unresolved, {missing} missing evidence, {verification} verification",
+    crossAssessing: "Verdict round in progress: {who}.",
+    crossRebutting: "Owners of contested claims are writing rebuttals: {who}.",
+    captainConsensus: "The captain ({captain}) is writing the cross-review decision.",
   },
 } as const;
 
