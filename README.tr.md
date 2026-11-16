@@ -5,7 +5,7 @@
 [English](README.md) · MIT · Node ≥ 22.13 · Windows ✔ · macOS/Linux: denenmedi, bkz. [Sınırlar](#sınırlar)
 
 ![DuoReview](docs/screenshot-tr.png)
-*Ekran görüntüsü örnek verilerle hazırlanmıştır.*
+*Ekran görüntüleri örnek verilerle hazırlanmıştır (`bench/demo.mjs`). Diğerleri: [görev ayrıntısı](docs/task-tr.png) · [notlar ve çapraz inceleme](docs/notes-tr.png).*
 
 DuoReview bir [MCP](https://modelcontextprotocol.io) sunucusu ve küçük bir Electron uygulamasıdır.
 `claude`, `codex` ve `agy` (Antigravity CLI, Gemini için) CLI'larını en çok üç terminalde yan yana çalıştırır ve hepsine ortak bir görev panosu verir.
@@ -34,6 +34,14 @@ Codex'inkini Gemini, Gemini'ninkini Claude; iki kişilik takımda ikisi birbirin
 - **Ajanlar için üslup kuralları.** İki ajana giden kurallar kodda ve metinde alışılmış dolguyu yasaklar: kodu tekrar eden yorum, istenmemiş soyutlama ve dosya, giriş cümlesi, kapanış özeti, övgü, emoji. İnceleyen, istenmemiş dosyayı ve ilgisiz değişikliği `major` sayar.
 - **CLI izin verdiği sürece global ayarlarına dokunmaz.** MCP bağlantısı oturum başına verilir (Claude'a `--mcp-config`, Codex'e `-c`). `agy` MCP sunucusunu ve araç iznini yalnız global ayarından okur; bu yüzden Gemini başlarken uygulama `duoreview` sunucusunu (`agy mcp add`) ve `mcp(duoreview/*)` iznini ekler, Gemini kapanınca ikisini de siler. Pano verisi projenin dışında tutulur, reponun kirlenmez.
 - **Türkçe ve İngilizce** arayüz, prompt ve araç metinleri (üst çubuktaki dil menüsü).
+- **Boyutlandırılabilir çalışma alanı.** Ajan bölmelerinin arasındaki ve yan panelin yanındaki ayırıcılar sürüklenir (çift tıklama eşitler); `A−` / `A+` ya da Ctrl + tekerlek tek bir terminalin yazı boyutunu değiştirir (9–24); *Büyüt* tek ajanı gösterir; mesaj kutusu bölmenin yarısına kadar büyür. Boyutlar hatırlanır.
+- **İnceleyen görünür ve değiştirilebilir.** İncelemedeki ya da düzeltmedeki görevde kimin incelediği yazar. O ajanın kotası dolduysa ya da kapalıysa görevi açıp takımdan başka birini inceleyici seçersin; görevin sahibi seçilemez.
+- **Görev ayrıntısı.** Panodaki göreve tıklayınca tarifi, kabul kriterleri ve inceleyenin her biri için yazdığı kanıt, özet, inceleme geçmişi ve görevin kendi diff'i açılır.
+- **Oturum yeniden açılınca sürer.** Durmuş ajanın düğmesi *Sürdür* olur ve önceki CLI oturumuna devam eder; *Yeni oturum* (ya da *Takımı başlat* yanındaki *Yeni oturumlarla*) temiz başlatır. Takım çalışırken yeniden açılan ajana rolü ve talimat yeniden gider. Neyin sürdürülebildiği [Sınırlar](#sınırlar) bölümünde.
+- **Subagent kuralı.** *Gelişmiş* altında ajanlara kendi subagent'ları için ne söyleneceğini seçersin: kapalı, yalnız araştırma (varsayılan) ya da ayrıca üstlendikleri görevin dosyalarına yazma. Subagent'lara DuoReview araçlarını çağırmamaları söylenir. Bu, kurallardaki bir talimattır; teknik engel değildir.
+- **Kurulum denetimi.** Açılışta uygulama her CLI'yı `--version` ile çalıştırır; eksik CLI o ajanın çubuğunda ve boş panoda, ilk kullanım için üç adımlı yönergenin yanında gösterilir.
+- **Bildirim.** Pencere odakta değilken bir ajan onayını bekliyorsa ya da bir görev ihtilafa düştüyse masaüstü bildirimi gelir ve görev çubuğu simgesi yanıp söner.
+- **Üstte daha az denetim.** Üst çubukta proje, takım, kaptan, dil ve *Takımı başlat* kalır; modeller, inceleme kipi, açılış, doğrulama komutu, subagent kuralı, skill'ler ve pano sıfırlama *Gelişmiş* altındadır.
 
 ## Hızlı başlangıç
 
@@ -45,10 +53,10 @@ npm install
 npm run app -- --project "C:\projenin\yolu"
 ```
 
-Takımı ve kaptanı seç, talimatı yaz ("giriş sayfası ve testlerini ekle" ya da "projeyi analiz edin, eksikleri çıkarın") ve **Takımı başlat**'a bas.
+Boş pano adımları ve hangi CLI'ların bulunduğunu gösterir. Takımı ve kaptanı seç, talimatı yaz ("giriş sayfası ve testlerini ekle" ya da "projeyi analiz edin, eksikleri çıkarın") ve **Takımı başlat**'a bas.
 Uygulama ajanları proje klasöründe başlatır, MCP sunucusunu bağlar ve her terminale tek kısa satır yazar; kurallar ve talimatın ajanlara MCP sunucusundan gider.
 
-Açılışın iki ayarı var. *Hepsi incelesin, tartışsın* varsayılandır ve daha çok token harcar: ajan başına bir inceleme, açılış ve plan için en çok dörder mesaj (üç ajanda altışar). *Yalnız kaptan planlasın* bunu atlar, doğrudan görev panosuna geçer.
+Açılışın (*Gelişmiş* altında) üç ayarı var. *Hepsi incelesin, tartışsın* varsayılandır ve daha çok token harcar: ajan başına bir inceleme, açılış ve plan için en çok dörder mesaj (üç ajanda altışar). *Çapraz inceleme (iddia iddia)* serbest tartışmanın yerini alır: her analiz teknik iddialarını (`C` kimlikli) listeler; her ortak her iddiaya kanıtla hüküm verir (`agree`, `disagree`, `unsure`, `alternative`); yalnız itirazlı iddialar sahibine döner, sahibi savunur, düzeltir ya da geri çeker; sonra itiraz edenler yeniden hükmeder, toplam en çok iki hüküm turu. Kaptan kabul edilen, reddedilen ve çözülemeyen iddiaları, eksik kanıtları ve gerekli doğrulamaları yazar (`post_consensus`), sonra planlar. Her iddia, hüküm, savunma ve kararın kimliği vardır ve neye cevap verdiğini taşır; sunucu hangi içeriği hangi ajana teslim ettiğini kaydeder. Notlar sekmesi ve Markdown dışa aktarma tüm kaydı gösterir. *Yalnız kaptan planlasın* bunların hepsini atlar, doğrudan görev panosuna geçer.
 
 Hakem bir ajanın terminaline yalnız ajan boştayken ve ekranda onay sorusu ya da menü yokken yazar (Codex'in açılıştaki güncelleme ve klasöre güven menüleri ile `agy`nin klasöre güven sorusu dahil). Enter'a basmadan önce yankının durulmasını bekler, ajan çalışmaya başlamadıysa yeniden basar; çünkü Codex hızlı gelen karakterlerin arasındaki Enter'ı satır sonu sayar.
 
@@ -57,6 +65,20 @@ Hakem bir ajanın terminaline yalnız ajan boştayken ve ekranda onay sorusu ya 
 | `npm run build` | MCP sunucusunu derler (`tsc`) |
 | `npm start` | MCP sunucusunu tek başına çalıştırır (`AGENT_ID` ve `DUOREVIEW_DIR` gerekir) |
 | `npm test` | Derler ve tüm testleri çalıştırır (model kotası harcamaz) |
+| `node bench/demo.mjs <klasör> --lang tr` | `<klasör>` içine demo panosu yazar ve ekran görüntüsü komutunu basar (aşağıda) |
+
+Ekran görüntülerini yeniden üretmek için (`npm run build` sonrası; `DUOREVIEW_FAKE=1` ajanlar yerine `cmd.exe` açar, demo kendi profil klasörünü kullandığı için uygulamanın ayarlarına dokunulmaz):
+
+```powershell
+node bench/demo.mjs bench/work/demo-tr --lang tr --shots docs   # demo panosu + docs/task-tr.png, docs/notes-tr.png
+$env:DUOREVIEW_FAKE = "1"
+$d = "$PWD\bench\work\demo-tr"
+npx electron . --user-data-dir=$d\profile --project $d\shop --data $d\data --lang tr --screenshot docs/screenshot-tr.png
+```
+
+İngilizce takım için `--lang en` ve `demo-en` kullan. `--data <klasör>` uygulamayı seçtiğin pano klasörüne yönlendirir; `--screenshot <dosya>` pencereyi kaydedip çıkar.
+
+MCP araçları: `next_action`, `post_tasks`, `assign_task`, `drop_task`, `claim_task`, `submit_task`, `review_task`, `status`, `post_note`, `discuss`, `open_thread`, `read_thread`, `assess`, `rebut`, `post_consensus`, `read_claims`, `send_prompt`, `read_inbox`, `triage`.
 
 Uygulama olmadan MCP kullanımı ve ayar örneği için [İngilizce README](README.md#using-the-mcp-server-without-the-app) bölümüne bak.
 Ajanların izlediği döngü [TEAM.md](TEAM.md) dosyasındadır.
@@ -88,6 +110,8 @@ Seçenekler ve değerlendirme ayrıntısı [İngilizce README](README.md#benchma
 - CLI alışılmadık bir yere kurulduysa yolu ver: `DUOREVIEW_CLAUDE_BIN=/yol/claude`, `DUOREVIEW_CODEX_BIN=/yol/codex`, `DUOREVIEW_GEMINI_BIN=/yol/agy`.
 - Ajanlar aynı çalışma klasörünü paylaşır (çakışma git worktree ile değil, `touches` denetimiyle önlenir).
 - İki ya da üç ajan: Claude Code, Codex CLI ve Antigravity CLI üzerinden Gemini.
+- Oturum sürdürme: Claude, uygulamanın verdiği oturum kimliğiyle devam eder. Codex yalnız, uygulama bu projeye ait ve o oturumun ilk `next_action` cevabında DuoReview'in döndürdüğü etiketi içeren tam bir Codex oturum günlüğü bulursa sürdürülür; bulamazsa yeni oturum açılır. Gemini her zaman yeni oturumla başlar (`agy` konuşmaları projeyle güvenilir biçimde eşlenemedi).
+- Subagent kuralı ajanların kurallarındaki bir metindir. MCP sunucusu subagent'ı üst ajandan ayıramaz, uygulama da subagent'ın araçlarını ya da dosya erişimini kısıtlamaz.
 - Gemini'nin MCP kaydı global olduğu için Gemini'yi aynı anda tek bir DuoReview penceresinde çalıştır. Gemini için kullanım göstergesi henüz yok.
 - Şimdilik yalnız kaynak koddan dağıtım: klonla, `npm install` ve `npm run app`. npm paketi veya kurulum dosyası henüz yok.
 - `node:sqlite` Node'da hâlâ deneysel, bu yüzden bir uyarı görürsün.

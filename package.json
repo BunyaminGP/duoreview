@@ -14,7 +14,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "app": "npm run build && electron .",
-    "test": "npm run build && node test/e2e.mjs && node test/review.test.mjs && node test/bench.test.mjs && node test/joint.test.mjs && node test/deps.test.mjs && node test/referee.test.mjs && node test/usage.test.mjs && node test/i18n.test.mjs && node test/agents.test.mjs && node test/validate.test.mjs && node test/skills.test.mjs && node test/inject.test.mjs && node test/lifecycle.test.mjs && node test/input.test.mjs && node test/integration.test.mjs && node test/models.test.mjs && node test/electron-node.mjs",
+    "test": "npm run build && node test/e2e.mjs && node test/review.test.mjs && node test/bench.test.mjs && node test/joint.test.mjs && node test/cross.test.mjs && node test/deps.test.mjs && node test/referee.test.mjs && node test/usage.test.mjs && node test/i18n.test.mjs && node test/agents.test.mjs && node test/validate.test.mjs && node test/skills.test.mjs && node test/inject.test.mjs && node test/lifecycle.test.mjs && node test/input.test.mjs && node test/integration.test.mjs && node test/models.test.mjs && node test/subagent.test.mjs && node test/reviewer.test.mjs && node test/sessions.test.mjs && node test/perf.test.mjs && node test/notify.test.mjs && node test/layout.test.mjs && node test/taskview.test.mjs && node test/electron-node.mjs",
     "tokens": "npm run build && node test/tokens.mjs",
     "bench": "npm run build && node bench/swebench.mjs",
     "prepack": "npm run build"
@@ -32,7 +32,7 @@
     "typescript": "^5.6.0"
   },
   "main": "app/main.js",
-  "description": "Let Claude Code and Codex split a job, cross-review each other and hand disputes to you. MCP server + Electron app.",
+  "description": "Let Claude Code, Codex and Gemini split a job, cross-review each other and hand disputes to you. MCP server + Electron app.",
   "license": "MIT",
   "author": "Bünyamin Güneypınar",
   "repository": {
@@ -49,6 +49,7 @@
     "mcp",
     "claude-code",
     "codex",
+    "gemini",
     "multi-agent",
     "code-review",
     "electron"
