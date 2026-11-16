@@ -33,7 +33,11 @@ const resumed = agents.buildSpec("claude", join(dir, "data"), { sessionId: sid, 
 assert.deepEqual(resumed.slice(resumed.indexOf("--resume"), resumed.indexOf("--resume") + 2), ["--resume", sid]);
 assert.ok(!resumed.includes("--session-id"));
 assert.ok(!resumed.includes("--continue"));
-assert.ok(!agents.buildSpec("codex", join(dir, "data"), { sessionId: sid, resume: true }).args.some((a) => /^(resume|--last|--continue)$/.test(a)));
+const codexResume = agents.buildSpec("codex", join(dir, "data"), { sessionId: sid, resume: true, sessionTag: sid }).args;
+assert.deepEqual(codexResume.slice(0, 2), ["resume", sid]);
+assert.ok(codexResume.some((a) => a.includes(`DUOREVIEW_SESSION_TAG="${sid}"`)));
+assert.ok(!codexResume.some((a) => /^(--last|--continue)$/.test(a)));
+assert.ok(!x.args.includes("resume"));
 
 // Gemini (agy): MCP kaydı ve araç izni global ayara yazılır, kapanınca geri alınır.
 // Sahte agy: node, --require ile çağrıyı kaydeden betiği çalıştırıp çıkar.

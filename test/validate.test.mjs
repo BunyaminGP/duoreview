@@ -21,7 +21,7 @@ for (const bad of [null, undefined, 5, {}, "x".repeat(2000)]) assert.equal(V.isD
 rmSync(dir, { recursive: true, force: true });
 
 const ok = V.sanitizeCfg({ team: ["gemini", "codex", "claude"], captain: "codex", reviewMode: "immediate", kickoff: "solo", profile: "guclu", brief: "iş", verify: " npm test ", models: { claude: "opus", codex: " gpt-5-codex ", gemini: "gemini-3.8-flash-high" }, efforts: { claude: "high", codex: "low", gemini: "max" } });
-assert.deepEqual(ok, { team: ["claude", "codex", "gemini"], captain: "codex", reviewMode: "immediate", kickoff: "solo", profile: "guclu", brief: "iş", verify: "npm test", models: { claude: "opus", codex: "gpt-5-codex", gemini: "gemini-3.8-flash-high" }, efforts: { claude: "high", codex: "low", gemini: "max" } });
+assert.deepEqual(ok, { subagents: "research", team: ["claude", "codex", "gemini"], captain: "codex", reviewMode: "immediate", kickoff: "solo", profile: "guclu", brief: "iş", verify: "npm test", models: { claude: "opus", codex: "gpt-5-codex", gemini: "gemini-3.8-flash-high" }, efforts: { claude: "high", codex: "low", gemini: "max" } });
 // Kaptan takımdan biri olmalı; tek kişilik ya da bozuk takım eski ikiliye düşer
 assert.deepEqual(V.sanitizeCfg({ team: ["codex", "gemini"], captain: "claude" }).captain, "codex");
 for (const bad of [["gemini"], ["gemini", "root"], "claude,codex", null]) assert.deepEqual(V.sanitizeCfg({ team: bad }).team, ["claude", "codex"]);
@@ -37,4 +37,17 @@ assert.deepEqual(evil.models, { claude: "", codex: "", gemini: "" }, "model adı
 assert.deepEqual(evil.efforts, { claude: "", codex: "", gemini: "" });
 for (const junk of [null, undefined, 3, "x", []]) assert.equal(V.sanitizeCfg(junk).captain, "claude");
 assert.ok(V.DECISIONS.includes("accept") && !V.DECISIONS.includes("delete"));
+for (const mode of ["off", "research", "scoped"]) assert.equal(V.sanitizeCfg({ subagents: mode }).subagents, mode);
+assert.equal(V.sanitizeCfg({ subagents: "unlimited" }).subagents, "research");
+const ui = V.sanitizeUi({ cols: { claude: -4, codex: Infinity, gemini: 10000 }, side: 900,
+  font: { claude: 2, codex: 99, gemini: "14" }, composer: { claude: -2, codex: 99999, gemini: NaN }, max: "root", advanced: "true" });
+assert.equal(ui.side, 600);
+assert.deepEqual(ui.font, { claude: 9, codex: 24, gemini: 13 });
+assert.deepEqual(ui.composer, { claude: 40, codex: 2000, gemini: 52 });
+assert.ok(Object.values(ui.cols).every((n) => Number.isFinite(n) && n > 0 && n <= 1));
+assert.ok(Math.abs(Object.values(ui.cols).reduce((a, b) => a + b, 0) - 1) < 1e-12);
+assert.equal(ui.max, null); assert.equal(ui.advanced, false);
+assert.equal(V.sanitizeUi({ side: -1 }).side, 260);
+assert.equal(V.sanitizeUi({ max: "codex", advanced: true }).max, "codex");
+assert.equal(V.sanitizeUi(null).side, 340);
 console.log("VALIDATE OK");

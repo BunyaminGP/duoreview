@@ -8,6 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { openDb } from "../dist/db.js";
 import { setMeta } from "../dist/flow.js";
+import * as flowModule from "../dist/flow.js";
 
 const require = createRequire(import.meta.url);
 const { createLifecycle, createInputGate, createPasteTracker } = require("../app/lifecycle.js");
@@ -111,7 +112,10 @@ try {
   assert.equal(db.prepare("SELECT read FROM messages").get().read, 0);
   client = new Client({ name: "integration-codex", version: "1" });
   await client.connect(new StdioClientTransport({ command: "node", args: [resolve("dist/server.js")],
-    env: { ...process.env, AGENT_ID: "codex", DUOREVIEW_DIR: dir } }));
+    env: { ...process.env, AGENT_ID: "codex", DUOREVIEW_DIR: dir, DUOREVIEW_SESSION_TAG: "eb18c34d-8f54-4bfd-9767-51c5355cec50" } }));
+  const firstAction = JSON.parse((await client.callTool({ name: "next_action", arguments: {} })).content[0].text);
+  assert.equal(firstAction.session_tag, "eb18c34d-8f54-4bfd-9767-51c5355cec50");
+  assert.equal(JSON.parse((await client.callTool({ name: "next_action", arguments: {} })).content[0].text).session_tag, undefined);
   const inbox = await client.callTool({ name: "read_inbox", arguments: {} });
   assert.deepEqual(JSON.parse(inbox.content[0].text), [{ sender: "claude", text: original }]);
   assert.equal(db.prepare("SELECT read FROM messages").get().read, 1);
@@ -122,14 +126,28 @@ try {
   let bridge, clipboardText = original;
   const ipc = { handle: (c, fn) => handlers.set(c, fn), on: (c, fn) => listeners.set(c, fn) };
   const electron = {
-    ipcMain: ipc, app: { whenReady: () => ({ then() {} }), on() {} },
+    ipcMain: ipc, app: { whenReady: () => ({ then() {} }), on() {}, getPath: () => dir },
     clipboard: { readText: () => clipboardText, writeText: (t) => { clipboardText = t; } },
   };
   const appRequire = createRequire(resolve("app/main.js"));
-  vm.runInNewContext(readFileSync("app/main.js", "utf8"), {
-    require: (id) => id === "electron" ? electron : id === "node-pty" ? {} : appRequire(id),
-    __dirname: resolve("app"), process: { ...process, on() {} }, console, setTimeout, clearTimeout, setInterval,
-  });
+  const spawned = [], initial = [], specs = [];
+  const pty = { spawn() {
+    const term = { pid: 900000 + spawned.length, onData() {}, onExit(fn) { this.exit = fn; }, kill() {}, write() {} };
+    spawned.push(term); return term;
+  } };
+  const sandbox = {
+    require: (id) => id === "electron" ? electron : id === "node-pty" ? pty : id === "./agents" ? {
+      ...appRequire(id), buildSpec: (agent, data, opts) => { specs.push({ agent, opts }); return { file: "fake", args: [] }; },
+    } : appRequire(id),
+    __dirname: resolve("app"), process: { ...process, env: { ...process.env, DUOREVIEW_FAKE: "" }, on() {} }, console, setTimeout, clearTimeout, setInterval,
+    testDb: db, testFlow: flowModule, testDir: dir,
+    testRef: { start() {}, stop() {}, queueInitial: (a, p) => initial.push({ a, p }) },
+  };
+  vm.runInNewContext(readFileSync("app/main.js", "utf8") + `
+    db = testDb; flow = testFlow; projectDir = testDir; referee = testRef;
+    sessions = createSessionStore(dataDirFor(projectDir));
+    globalThis.sessionTest = { stateSnapshot, reload: () => { sessions = createSessionStore(dataDirFor(projectDir)); } };
+  `, sandbox);
   vm.runInNewContext(readFileSync("app/preload.js", "utf8"), { require: () => ({
     contextBridge: { exposeInMainWorld: (_name, api) => { bridge = api; } },
     ipcRenderer: {
@@ -142,6 +160,45 @@ try {
   assert.equal((await bridge.send("codex", "stopped")).ok, false);
   assert.equal((await bridge.send("unknown", "wrong agent")).ok, false);
   bridge.hold("unknown", true);
+  bridge.saveUi({ side: 450, font: { codex: 18 }, max: "codex", advanced: true });
+  const savedUi = sandbox.sessionTest.stateSnapshot().ui;
+  assert.equal(savedUi.side, 450); assert.equal(savedUi.font.codex, 18);
+  assert.equal(savedUi.max, "codex"); assert.equal(savedUi.advanced, true);
+  assert.equal(JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")).ui.side, 450);
+  const detailId = Number(db.prepare("INSERT INTO tasks(title,description,acceptance,touches) VALUES (?,?,?,?)").run(
+    "Detail test", "Description", '["criterion"]', '["file.js"]').lastInsertRowid);
+  const detail = await bridge.taskDetail(detailId);
+  assert.equal(detail.description, "Description"); assert.deepEqual(detail.acceptance, ["criterion"]);
+  assert.equal(await bridge.taskDetail(-1), null); assert.equal(await bridge.taskDetail("1"), null);
+  db.prepare("DELETE FROM tasks WHERE id=?").run(detailId);
+  setMeta(db, "brief", "");
+  await listeners.get("pty:start")({}, { agent: "claude", cols: 80, rows: 24 });
+  assert.equal(initial.at(-1).a, "claude", "persisted team + brief queues protocol without teamStarted");
+  assert.match(initial.at(-1).p, /next_action/);
+  setMeta(db, "brief", "resume protocol after application restart");
+  const firstSession = specs.at(-1).opts.sessionId;
+  spawned.at(-1).exit({ exitCode: 0 });
+  sandbox.sessionTest.reload();
+  assert.equal(sandbox.sessionTest.stateSnapshot().resumable.claude, true);
+  await listeners.get("pty:start")({}, { agent: "claude" });
+  assert.equal(specs.at(-1).opts.sessionId, firstSession);
+  assert.equal(specs.at(-1).opts.resume, true);
+  spawned.at(-1).exit({ exitCode: 0 });
+  await listeners.get("pty:start")({}, { agent: "claude", fresh: true });
+  assert.notEqual(specs.at(-1).opts.sessionId, firstSession);
+  assert.equal(specs.at(-1).opts.resume, false);
+  const freshId = specs.at(-1).opts.sessionId;
+  spawned.at(-1).exit({ exitCode: 0 });
+  await listeners.get("team:start")({}, { cfg: { team: ["claude", "codex"], brief: "resume protocol after application restart", subagents: "scoped" } });
+  assert.equal(flowModule.getMeta(db, "subagents", ""), "scoped");
+  assert.equal(specs.findLast((s) => s.agent === "claude").opts.sessionId, freshId);
+  assert.equal(specs.findLast((s) => s.agent === "claude").opts.resume, true);
+  const count = spawned.length;
+  spawned.at(-2).exit({ exitCode: 1 });
+  assert.equal(spawned.length, count + 1, "failed resume retries once with fresh session");
+  assert.equal(specs.at(-1).opts.resume, false);
+  spawned.at(-1).exit({ exitCode: 1 });
+  assert.equal(spawned.length, count + 1, "fresh failure cannot loop");
   assert.equal(getLifecycleButtonState(life.life("codex")).canSend, true);
   life.stop("codex");
   assert.equal(getLifecycleButtonState(life.life("codex")).canStart, false);

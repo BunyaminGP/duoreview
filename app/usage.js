@@ -7,6 +7,18 @@ const path = require("node:path");
 const { t } = require("./i18n");
 
 const TAIL_BYTES = 400 * 1024;
+const usageCache = new Map();
+
+function cachedUsage(file, read) {
+  const stat = fs.statSync(file);
+  const cached = usageCache.get(file);
+  if (cached && cached.mtime === stat.mtimeMs && cached.size === stat.size && cached.ino === stat.ino) return cached.value;
+  const value = read();
+  usageCache.delete(file);
+  usageCache.set(file, { mtime: stat.mtimeMs, size: stat.size, ino: stat.ino, value });
+  if (usageCache.size > 32) usageCache.delete(usageCache.keys().next().value);
+  return value;
+}
 
 const desc = (dir) => { try { return fs.readdirSync(dir).sort().reverse(); } catch { return []; } };
 
@@ -61,30 +73,35 @@ function windowOf(pct, resetsAt, windowMin, now) {
 
 function readCodexUsage(now = Date.now(), home = os.homedir()) {
   for (const file of newestRollouts(3, home)) {
-    let text;
-    try { text = readTail(file, TAIL_BYTES); } catch { continue; }
-    const lines = text.split("\n");
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (!lines[i].includes("rate_limits")) continue;
-      try {
-        const j = JSON.parse(lines[i]);
-        const rl = j.payload?.rate_limits;
-        if (j.payload?.type !== "token_count" || !rl) continue;
-        return {
-          ok: true, plan: rl.plan_type ?? null, asOf: Date.parse(j.timestamp) || null,
-          five: windowOf(rl.primary?.used_percent, rl.primary?.resets_at, rl.primary?.window_minutes, now),
-          week: windowOf(rl.secondary?.used_percent, rl.secondary?.resets_at, rl.secondary?.window_minutes, now),
-          tokens: j.payload.info?.total_token_usage?.total_tokens ?? null,
-        };
-      } catch { /* yarım satır olabilir */ }
-    }
+    let j;
+    try {
+      j = cachedUsage(file, () => {
+        const lines = readTail(file, TAIL_BYTES).split("\n");
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (!lines[i].includes("rate_limits")) continue;
+          try {
+            const event = JSON.parse(lines[i]);
+            if (event.payload?.type === "token_count" && event.payload.rate_limits) return event;
+          } catch { /* yarım satır olabilir */ }
+        }
+        return null;
+      });
+    } catch { continue; }
+    if (!j) continue;
+    const rl = j.payload.rate_limits;
+    return {
+      ok: true, plan: rl.plan_type ?? null, asOf: Date.parse(j.timestamp) || null,
+      five: windowOf(rl.primary?.used_percent, rl.primary?.resets_at, rl.primary?.window_minutes, now),
+      week: windowOf(rl.secondary?.used_percent, rl.secondary?.resets_at, rl.secondary?.window_minutes, now),
+      tokens: j.payload.info?.total_token_usage?.total_tokens ?? null,
+    };
   }
   return { ok: false, note: t("noCodexUsage") };
 }
 
 function readClaudeUsage(statusFile, now = Date.now()) {
   let s;
-  try { s = JSON.parse(fs.readFileSync(statusFile, "utf8")); } catch { return { ok: false, note: t("afterFirstReply") }; }
+  try { s = cachedUsage(statusFile, () => JSON.parse(fs.readFileSync(statusFile, "utf8"))); } catch { return { ok: false, note: t("afterFirstReply") }; }
   const rl = s.rate_limits;
   if (!rl) return { ok: false, asOf: s.at, note: t("noLimitInfo") };
   const f = rl.five_hour, w = rl.seven_day;

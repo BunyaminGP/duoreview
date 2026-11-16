@@ -114,6 +114,7 @@ function buildSpec(agent, dataDir, opts = {}) {
   const exec = fwd(process.execPath);
   const entry = serverEntry();
   const env = mcpEnv(agent, dataDir, opts.projectDir);
+  if (agent === "codex" && opts.sessionTag) env.DUOREVIEW_SESSION_TAG = opts.sessionTag;
 
   if (agent === "claude") {
     fs.mkdirSync(dataDir, { recursive: true });
@@ -125,7 +126,7 @@ function buildSpec(agent, dataDir, opts = {}) {
     const args = ["--mcp-config", cfg, "--allowedTools", "mcp__duoreview"];
     if (opts.model) args.push("--model", opts.model);
     if (opts.effort) args.push("--effort", opts.effort);
-    // Oturum kimliğini uygulama verir: yeniden başlatmada yalnız kendi açtığı oturum sürdürülür (--continue başka oturumu alabilir).
+    // Oturum kimliğini uygulama verir: yeniden başlatmada yalnız kendi açtığı oturum sürdürülür.
     if (opts.sessionId) args.push(opts.resume ? "--resume" : "--session-id", opts.sessionId);
 
     // Kalan kullanım için: yalnız bu oturuma özel durum çubuğu komutu (global ayara dokunmaz).
@@ -160,6 +161,7 @@ function buildSpec(agent, dataDir, opts = {}) {
     file: codex.file,
     args: [
       ...codex.args,
+      ...(opts.resume && opts.sessionId ? ["resume", opts.sessionId] : []),
       "-c", `mcp_servers.duoreview.command=${toml(exec)}`,
       "-c", `mcp_servers.duoreview.args=${toml([entry])}`,
       "-c", `mcp_servers.duoreview.env=${envToml}`,
