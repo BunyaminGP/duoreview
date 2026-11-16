@@ -25,63 +25,78 @@
     <label><span data-i18n="captain"></span>
       <select id="captain"><option value="claude">Claude</option><option value="codex">Codex</option><option value="gemini">Gemini</option></select>
     </label>
-    <label><span data-i18n="review"></span>
-      <select id="mode">
-        <option value="after_all" data-i18n="modeAfterAll"></option>
-        <option value="immediate" data-i18n="modeImmediate"></option>
-      </select>
-    </label>
-    <label data-i18n-title="kickoffTitle"><span data-i18n="kickoff"></span>
-      <select id="kickoff">
-        <option value="joint" data-i18n="kickoffJoint"></option>
-        <option value="solo" data-i18n="kickoffSolo"></option>
-      </select>
-    </label>
     <span class="spacer"></span>
     <label><span data-i18n="language"></span>
       <select id="lang"></select>
     </label>
-    <button id="reset" data-i18n-title="resetTitle" data-i18n="reset"></button>
+    <button id="advanced-toggle" data-i18n-title="advancedTitle" data-i18n="advanced"></button>
+    <button id="team-fresh" data-i18n-title="teamFreshTitle" data-i18n="teamFresh" hidden></button>
     <button id="team" class="primary" data-i18n="teamStart"></button>
   </header>
-  <div class="models">
-    <label><span data-i18n="profile"></span>
-      <select id="profile">
-        <option value="ekonomik" data-i18n="profEco"></option>
-        <option value="dengeli" data-i18n="profBal"></option>
-        <option value="guclu" data-i18n="profPower"></option>
-        <option value="ozel" data-i18n="profCustom"></option>
-      </select>
-    </label>
-    <span class="grp" id="grp-claude"><b>Claude</b>
-      <select id="model-claude" class="model" data-i18n-title="modelTitle"></select>
-      <input id="model-claude-custom" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off" hidden>
-      <select id="effort-claude" data-i18n-title="effortTitle"></select>
-    </span>
-    <span class="grp" id="grp-codex"><b>Codex</b>
-      <select id="model-codex" class="model" data-i18n-title="modelTitle"></select>
-      <input id="model-codex-custom" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off" hidden>
-      <select id="effort-codex" data-i18n-title="effortTitle"></select>
-    </span>
-    <span class="grp" id="grp-gemini"><b>Gemini</b>
-      <select id="model-gemini" class="model" data-i18n-title="modelTitle"></select>
-      <input id="model-gemini-custom" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off" hidden>
-      <select id="effort-gemini" data-i18n-title="effortTitle"></select>
-    </span>
-    <span class="note" data-i18n="modelsNote"></span>
+  <div id="advanced-panel" class="models advanced-panel" hidden>
+    <div class="advanced-row">
+      <label><span data-i18n="review"></span>
+        <select id="mode">
+          <option value="after_all" data-i18n="modeAfterAll"></option>
+          <option value="immediate" data-i18n="modeImmediate"></option>
+        </select>
+      </label>
+      <label data-i18n-title="kickoffTitle"><span data-i18n="kickoff"></span>
+        <select id="kickoff">
+          <option value="joint" data-i18n="kickoffJoint"></option>
+          <option value="cross" data-i18n="kickoffCross"></option>
+          <option value="solo" data-i18n="kickoffSolo"></option>
+        </select>
+      </label>
+      <label data-i18n-title="subagentsTitle"><span data-i18n="subagents"></span>
+        <select id="subagents" data-i18n-title="subagentsTitle">
+          <option value="research" data-i18n="subResearch"></option>
+          <option value="scoped" data-i18n="subScoped"></option>
+          <option value="off" data-i18n="subOff"></option>
+        </select>
+      </label>
+      <label for="verify" data-i18n-title="verifyTitle"><span data-i18n="verifyLabel"></span>
+        <input id="verify" data-i18n-placeholder="verifyPh" data-i18n-title="verifyTitle" spellcheck="false" autocomplete="off">
+      </label>
+      <button id="skills-open" data-i18n-title="skillsTitle" data-i18n="skills"></button>
+      <button id="reset" data-i18n-title="resetTitle" data-i18n="reset"></button>
+    </div>
+    <div class="advanced-row">
+      <label><span data-i18n="profile"></span>
+        <select id="profile">
+          <option value="ekonomik" data-i18n="profEco"></option>
+          <option value="dengeli" data-i18n="profBal"></option>
+          <option value="guclu" data-i18n="profPower"></option>
+          <option value="ozel" data-i18n="profCustom"></option>
+        </select>
+      </label>
+      <span class="grp" id="grp-claude"><b>Claude</b>
+        <select id="model-claude" class="model" data-i18n-title="modelTitle"></select>
+        <input id="model-claude-custom" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off" hidden>
+        <select id="effort-claude" data-i18n-title="effortTitle"></select>
+      </span>
+      <span class="grp" id="grp-codex"><b>Codex</b>
+        <select id="model-codex" class="model" data-i18n-title="modelTitle"></select>
+        <input id="model-codex-custom" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off" hidden>
+        <select id="effort-codex" data-i18n-title="effortTitle"></select>
+      </span>
+      <span class="grp" id="grp-gemini"><b>Gemini</b>
+        <select id="model-gemini" class="model" data-i18n-title="modelTitle"></select>
+        <input id="model-gemini-custom" data-i18n-placeholder="modelPh" spellcheck="false" autocomplete="off" hidden>
+        <select id="effort-gemini" data-i18n-title="effortTitle"></select>
+      </span>
+      <span class="note" data-i18n="modelsNote"></span>
+    </div>
   </div>
   <div class="brief">
     <label for="brief" data-i18n="briefLabel"></label>
     <textarea id="brief" rows="2" spellcheck="false"></textarea>
-    <label for="verify" data-i18n="verifyLabel" data-i18n-title="verifyTitle"></label>
-    <input id="verify" data-i18n-placeholder="verifyPh" data-i18n-title="verifyTitle" spellcheck="false" autocomplete="off">
-    <button id="skills-open" data-i18n-title="skillsTitle" data-i18n="skills"></button>
   </div>
   <main>
     <section class="pane" id="pane-claude">
       <div class="bar"><span class="dot" id="dot-claude"></span>Claude Code
         <span class="badge" id="role-claude"></span><span class="state" id="state-claude"></span><span class="usage" id="usage-claude"></span>
-        <button data-start="claude" data-i18n="start"></button><button data-kill="claude" data-i18n="stop"></button></div>
+        <span class="bar-btns"><button class="bar-tool" data-font-down="claude" data-i18n-title="fontDownTitle">A−</button><button class="bar-tool" data-font-up="claude" data-i18n-title="fontUpTitle">A+</button><button class="bar-tool" id="max-claude" data-max="claude" data-i18n-title="paneMaxTitle" data-i18n="paneMax"></button><button data-start="claude" data-i18n="start"></button><button data-fresh="claude" data-i18n="newSession" data-i18n-title="newSessionTitle" hidden></button><button data-kill="claude" data-i18n="stop"></button></span></div>
       <div class="term" id="term-claude"></div>
       <div class="composer" id="composer-claude">
         <textarea id="input-claude" class="composer-input" rows="2" data-i18n-placeholder="composerPh" spellcheck="false"></textarea>
@@ -92,10 +107,11 @@
         </div>
       </div>
     </section>
+    <div class="splitter" id="split-1" data-split="1" data-i18n-title="splitterTitle" hidden></div>
     <section class="pane" id="pane-codex">
       <div class="bar"><span class="dot" id="dot-codex"></span>Codex CLI
         <span class="badge" id="role-codex"></span><span class="state" id="state-codex"></span><span class="usage" id="usage-codex"></span>
-        <button data-start="codex" data-i18n="start"></button><button data-kill="codex" data-i18n="stop"></button></div>
+        <span class="bar-btns"><button class="bar-tool" data-font-down="codex" data-i18n-title="fontDownTitle">A−</button><button class="bar-tool" data-font-up="codex" data-i18n-title="fontUpTitle">A+</button><button class="bar-tool" id="max-codex" data-max="codex" data-i18n-title="paneMaxTitle" data-i18n="paneMax"></button><button data-start="codex" data-i18n="start"></button><button data-fresh="codex" data-i18n="newSession" data-i18n-title="newSessionTitle" hidden></button><button data-kill="codex" data-i18n="stop"></button></span></div>
       <div class="term" id="term-codex"></div>
       <div class="composer" id="composer-codex">
         <textarea id="input-codex" class="composer-input" rows="2" data-i18n-placeholder="composerPh" spellcheck="false"></textarea>
@@ -106,10 +122,11 @@
         </div>
       </div>
     </section>
+    <div class="splitter" id="split-2" data-split="2" data-i18n-title="splitterTitle" hidden></div>
     <section class="pane" id="pane-gemini">
       <div class="bar"><span class="dot" id="dot-gemini"></span>Gemini · Antigravity CLI
         <span class="badge" id="role-gemini"></span><span class="state" id="state-gemini"></span><span class="usage" id="usage-gemini"></span>
-        <button data-start="gemini" data-i18n="start"></button><button data-kill="gemini" data-i18n="stop"></button></div>
+        <span class="bar-btns"><button class="bar-tool" data-font-down="gemini" data-i18n-title="fontDownTitle">A−</button><button class="bar-tool" data-font-up="gemini" data-i18n-title="fontUpTitle">A+</button><button class="bar-tool" id="max-gemini" data-max="gemini" data-i18n-title="paneMaxTitle" data-i18n="paneMax"></button><button data-start="gemini" data-i18n="start"></button><button data-fresh="gemini" data-i18n="newSession" data-i18n-title="newSessionTitle" hidden></button><button data-kill="gemini" data-i18n="stop"></button></span></div>
       <div class="term" id="term-gemini"></div>
       <div class="composer" id="composer-gemini">
         <textarea id="input-gemini" class="composer-input" rows="2" data-i18n-placeholder="composerPh" spellcheck="false"></textarea>
@@ -120,8 +137,9 @@
         </div>
       </div>
     </section>
+    <div class="splitter splitter-side" id="split-side" data-split="side" data-i18n-title="splitterTitle"></div>
     <section id="reader" class="reader" hidden>
-      <div class="bar"><span data-i18n="tabTalk"></span>
+      <div class="bar"><span id="reader-title" data-i18n="tabTalk"></span>
         <button id="talk-export" data-i18n="exportTalk"></button><button id="reader-close" data-i18n="close"></button></div>
       <div id="reader-body" class="reader-body"></div>
     </section>
@@ -163,9 +181,20 @@
     <button id="ctx-copy" data-i18n="copy"></button>
     <button id="ctx-paste" data-i18n="paste"></button>
   </div>
+  <div id="modal" class="modal-backdrop" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true">
+      <p id="modal-msg" class="modal-msg"></p>
+      <div class="modal-actions">
+        <button id="modal-cancel" data-i18n="modalCancel"></button>
+        <button id="modal-ok" class="primary" data-i18n="modalOk"></button>
+      </div>
+    </div>
+  </div>
   <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
   <script src="i18n.js"></script>
+  <script src="layout.js"></script>
+  <script src="taskview.js"></script>
   <script src="input.js"></script>
   <script src="renderer.js"></script>
 </body>

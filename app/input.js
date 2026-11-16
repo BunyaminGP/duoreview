@@ -158,22 +158,30 @@
     };
   }
 
-  function getLifecycleButtonState(lifeState) {
+  function getLifecycleButtonState(lifeState, resumable = false) {
     const state = String(lifeState || "STOPPED").toUpperCase();
+    const hasResume = Boolean(resumable);
+    const startLabelKey = hasResume ? "resume" : "start";
     switch (state) {
       case "RUNNING":
-        return { state, canStart: false, canStop: true, canSend: true, restartable: false };
+        return { state, canStart: false, canStop: true, canSend: true, restartable: false, resumable: hasResume, startLabelKey, showFresh: false };
       case "STOPPING":
-        return { state, canStart: false, canStop: false, canSend: false, restartable: false };
+        return { state, canStart: false, canStop: false, canSend: false, restartable: false, resumable: hasResume, startLabelKey, showFresh: false };
       case "STOPPED":
-        return { state, canStart: true, canStop: false, canSend: false, restartable: true };
+        return { state, canStart: true, canStop: false, canSend: false, restartable: true, resumable: hasResume, startLabelKey, showFresh: hasResume };
       case "EXITED":
-        return { state, canStart: true, canStop: false, canSend: false, restartable: true };
+        return { state, canStart: true, canStop: false, canSend: false, restartable: true, resumable: hasResume, startLabelKey, showFresh: hasResume };
       case "FAILED":
-        return { state, canStart: true, canStop: false, canSend: false, restartable: true };
+        return { state, canStart: true, canStop: false, canSend: false, restartable: true, resumable: hasResume, startLabelKey, showFresh: hasResume };
       default:
-        return { state: "STOPPED", canStart: true, canStop: false, canSend: false, restartable: true };
+        return { state: "STOPPED", canStart: true, canStop: false, canSend: false, restartable: true, resumable: hasResume, startLabelKey, showFresh: hasResume };
     }
+  }
+
+  function triggerAgentStart(bridge, agent, cols, rows, fresh = false) {
+    if (!bridge || typeof bridge.start !== "function") return false;
+    bridge.start(agent, cols, rows, Boolean(fresh));
+    return true;
   }
 
   function formatLifecycleStatus(lifeState, lifeWhy, t) {
@@ -195,6 +203,7 @@
     createComposerController,
     createHoldController,
     getLifecycleButtonState,
+    triggerAgentStart,
     formatLifecycleStatus,
   };
 

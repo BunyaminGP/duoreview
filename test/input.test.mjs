@@ -14,6 +14,7 @@ const {
   createComposerController,
   createHoldController,
   getLifecycleButtonState,
+  triggerAgentStart,
   formatLifecycleStatus,
 } = inputLib;
 
@@ -243,4 +244,31 @@ test("6. Terminal geçmişi restartta term.reset/clear ile silinmez, modlar güv
   assert.equal(clearCalled, false, "term.clear çağrılmamalı (scrollback silinmemeli)");
   assert.equal(writtenData.length, 1);
   assert.equal(writtenData[0], RESET_TUI_MODES_SEQ);
+});
+
+test("7. resumable true iken Sürdür + Yeni oturum (fresh=true), false iken tek Başlat düğmesi", () => {
+  const noResume = getLifecycleButtonState("STOPPED", false);
+  assert.equal(noResume.canStart, true);
+  assert.equal(noResume.startLabelKey, "start");
+  assert.equal(noResume.showFresh, false);
+
+  const withResume = getLifecycleButtonState("STOPPED", true);
+  assert.equal(withResume.canStart, true);
+  assert.equal(withResume.startLabelKey, "resume");
+  assert.equal(withResume.showFresh, true);
+
+  const runningWithResume = getLifecycleButtonState("RUNNING", true);
+  assert.equal(runningWithResume.canStart, false);
+  assert.equal(runningWithResume.showFresh, false);
+
+  const calls = [];
+  const fakeBridge = {
+    start: (agent, cols, rows, fresh) => calls.push({ agent, cols, rows, fresh }),
+  };
+  triggerAgentStart(fakeBridge, "claude", 100, 30, false);
+  triggerAgentStart(fakeBridge, "claude", 100, 30, true);
+  assert.deepEqual(calls, [
+    { agent: "claude", cols: 100, rows: 30, fresh: false },
+    { agent: "claude", cols: 100, rows: 30, fresh: true },
+  ]);
 });

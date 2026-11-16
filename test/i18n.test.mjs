@@ -15,8 +15,8 @@ function parity(name, cats) {
 parity("app", app.STR);
 parity("server", srv.MESSAGES);
 
-app.setLang("en"); assert.equal(app.t("start"), "Start");
-app.setLang("tr"); assert.equal(app.t("start"), "Başlat");
+app.setLang("en"); assert.equal(app.t("start"), "Start"); assert.equal(app.t("paneMaxTitle"), "Maximize pane");
+app.setLang("tr"); assert.equal(app.t("start"), "Başlat"); assert.equal(app.t("paneMaxTitle"), "Bölmeyi büyüt");
 assert.equal(app.norm("tr-TR"), "tr"); assert.equal(app.norm("en-US"), "en"); assert.equal(app.norm("de"), "en");
 assert.equal(app.t("doneOf", { done: 2, total: 5 }), "2/5 bitti");
 
